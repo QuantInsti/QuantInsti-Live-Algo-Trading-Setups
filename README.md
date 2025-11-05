@@ -20,7 +20,7 @@ This monorepo is designed to be extended with setups for any broker or asset cla
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups](https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups)
+    git clone https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups
     ```
 2.  **Navigate to a setup directory:**
     ```bash
