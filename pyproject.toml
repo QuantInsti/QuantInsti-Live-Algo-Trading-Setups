@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algorithmic-trading-setups"
+version = "1.0.0"
+description = "A monorepo containing ready-to-use algorithmic trading setups for various brokers and asset classes."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE.md" }
+authors = [
+    { name = "QuantInsti", email = "support@quantinsti.com" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: Free for non-commercial use",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+
+[tool.ruff]
+line-length = 88
+select = ["E", "W", "F", "I", "U", "C4", "B"]
+ignore = ["E501"]

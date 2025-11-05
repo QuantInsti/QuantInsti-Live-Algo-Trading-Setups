@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/ibkr_forex/__init__.py
+src/ibkr_forex/create_database.py
+src/ibkr_forex/engine.py
+src/ibkr_forex/ib_functions.py
+src/ibkr_forex/setup.py
+src/ibkr_forex/setup_for_download_data.py
+src/ibkr_forex/setup_functions.py
+src/ibkr_forex/trading_functions.py
+src/ibkr_forex.egg-info/PKG-INFO
+src/ibkr_forex.egg-info/SOURCES.txt
+src/ibkr_forex.egg-info/dependency_links.txt
+src/ibkr_forex.egg-info/requires.txt
+src/ibkr_forex.egg-info/top_level.txt
