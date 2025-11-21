@@ -1,6 +1,10 @@
 # Live Algorithmic Trading Setups
 
-This repository contains a collection of ready-to-use algorithmic trading setups for different brokers and asset classes. Each setup provides a foundational structure for you to develop, test, and deploy live trading strategies.
+This repository contains a collection of ready-to-use algorithmic trading setups for different brokers and asset classes. Each setup provides a foundational structure for developing, testing, and deploying live trading strategies.
+
+# Authors
+- Author: [José Carlos Gonzáles Tanaka](https://www.linkedin.com/in/jose-carlos-gonzales-tanaka/)
+- The EPAT Content Team is responsible for the maintenance and update of this repository
 
 ## Setups Included
 
