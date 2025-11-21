@@ -2,9 +2,9 @@
 
 This repository contains a collection of ready-to-use algorithmic trading setups for different brokers and asset classes. Each setup provides a foundational structure for developing, testing, and deploying live trading strategies.
 
-# Authors
+## Contributors
 - Author: [José Carlos Gonzáles Tanaka](https://www.linkedin.com/in/jose-carlos-gonzales-tanaka/)
-- The EPAT Content Team is responsible for the maintenance and update of this repository
+- QuantInsti's EPAT Content Team is responsible for maintaining and contributing to this repository.
 
 ## Setups Included
 
