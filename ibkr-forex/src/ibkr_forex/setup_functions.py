@@ -563,21 +563,22 @@ def update_submitted_orders(app):
             # Clear the temporary dataframe
             app.temp_exec_df = pd.DataFrame()
             
-            # Set the datetime as index
-            app.temp_comm_df.set_index('datetime',inplace=True)
-            # Erase the index name
-            app.temp_comm_df.index.name = ''
-            # Convert to NaN Realized PnL whose values are extremely high (due to IB mistake value)
-            mask = app.temp_comm_df['Realized PnL'].astype(float) == 1.7976931348623157e+308
-            app.temp_comm_df.loc[mask,'Realized PnL'] = np.nan
-            # Concatenate the temporary dataframe with the main dataframe
-            app.comm_df = pd.concat([app.comm_df,app.temp_comm_df])
-            # Drop duplicates
-            app.comm_df.drop_duplicates(inplace=True)
-            # Sor the dataframe by index
-            app.comm_df.sort_index(ascending=True, inplace=True)
-            # Clear the temporary dataframe
-            app.temp_comm_df = pd.DataFrame()
+            if (app.temp_comm_df.empty == False):
+                # Set the datetime as index
+                app.temp_comm_df.set_index('datetime',inplace=True)
+                # Erase the index name
+                app.temp_comm_df.index.name = ''
+                # Convert to NaN Realized PnL whose values are extremely high (due to IB mistake value)
+                mask = app.temp_comm_df['Realized PnL'].astype(float) == 1.7976931348623157e+308
+                app.temp_comm_df.loc[mask,'Realized PnL'] = np.nan
+                # Concatenate the temporary dataframe with the main dataframe
+                app.comm_df = pd.concat([app.comm_df,app.temp_comm_df])
+                # Drop duplicates
+                app.comm_df.drop_duplicates(inplace=True)
+                # Sor the dataframe by index
+                app.comm_df.sort_index(ascending=True, inplace=True)
+                # Clear the temporary dataframe
+                app.temp_comm_df = pd.DataFrame()
 
             
             # If the orders status and positions dataframes are not empty

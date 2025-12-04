@@ -56,9 +56,9 @@ logging.basicConfig(filename=f'data/log/log_file_{now_.year}_{month}_{day}_{hour
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
 # Function to run the app each period
-def run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  
-            historical_data_address, base_df_address, data_frequency, 
-            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail):
+def run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,
+            historical_data_address, base_df_address, data_frequency,
+            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage):
     
     print('='*100)
     print('='*100)
@@ -77,7 +77,7 @@ def run_app(host, port, account, client_id, timezone, now_, account_currency, sy
         # Create an object of the app class
         app = trading_app(logging, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,  
                           market_open_time, market_close_time, 
-                          previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail)
+                          previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail, leverage)
                 
         # Connect the app to the IB server
         print('Connecting the app to the IB server...')
@@ -179,8 +179,8 @@ def run_app(host, port, account, client_id, timezone, now_, account_currency, sy
             break
                 
 # Run the trading all inside a loop for the whole week                        
-def run_trading_setup_loop(host, port, account, client_id, data_frequency, london_start_hour, local_restart_hour, timezone, now_, account_currency, symbol, 
-                           historical_data_address, base_df_address, train_span, test_span, trail):  
+def run_trading_setup_loop(host, port, account, client_id, data_frequency, london_start_hour, local_restart_hour, timezone, now_, account_currency, symbol,
+                           historical_data_address, base_df_address, train_span, test_span, trail, leverage):  
                   
     print('='*100)
     print('='*100)
@@ -204,23 +204,23 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
     print(f'market close time is {market_close_time}')
     logging.info(f'market close time is {market_close_time}')
     
-    print(f'\t - auto_restart_start_datetime is {auto_restart_start_datetime}')
-    logging.info(f'\t - auto_restart_start_datetime is {auto_restart_start_datetime}')
-    print(f'\t - auto_restart_datetime_before_end is {auto_restart_datetime_before_end}')
-    logging.info(f'\t - auto_restart_datetime_before_end is {auto_restart_datetime_before_end}')
-    print(f'\t - auto_restart_end_datetime is {auto_restart_end_datetime}')
-    logging.info(f'\t - auto_restart_end_datetime is {auto_restart_end_datetime}')
+    print(f'	 - auto_restart_start_datetime is {auto_restart_start_datetime}')
+    logging.info(f'	 - auto_restart_start_datetime is {auto_restart_start_datetime}')
+    print(f'	 - auto_restart_datetime_before_end is {auto_restart_datetime_before_end}')
+    logging.info(f'	 - auto_restart_datetime_before_end is {auto_restart_datetime_before_end}')
+    print(f'	 - auto_restart_end_datetime is {auto_restart_end_datetime}')
+    logging.info(f'	 - auto_restart_end_datetime is {auto_restart_end_datetime}')
     if dt.datetime.now()>=market_open_time:
-       print(f'\t - previous_day_start_datetime is {previous_day_start_datetime}')
-       logging.info(f'\t - previous_day_start_datetime is {previous_day_start_datetime}')
-    print(f'\t - day_datetime_before_end is {day_datetime_before_end}')
-    logging.info(f'\t - day_datetime_before_end is {day_datetime_before_end}')
-    print(f'\t - trading_day_end_datetime is {trading_day_end_datetime}')
-    logging.info(f'\t - trading_day_end_datetime is {trading_day_end_datetime}')
-    print(f'\t - day_end_datetime is {day_end_datetime}')
-    logging.info(f'\t - day_end_datetime is {day_end_datetime}')
-    print(f'\t - day_start_datetime is {day_start_datetime}')
-    logging.info(f'\t - day_start_datetime is {day_start_datetime}')
+       print(f'	 - previous_day_start_datetime is {previous_day_start_datetime}')
+       logging.info(f'	 - previous_day_start_datetime is {previous_day_start_datetime}')
+    print(f'	 - day_datetime_before_end is {day_datetime_before_end}')
+    logging.info(f'	 - day_datetime_before_end is {day_datetime_before_end}')
+    print(f'	 - trading_day_end_datetime is {trading_day_end_datetime}')
+    logging.info(f'	 - trading_day_end_datetime is {trading_day_end_datetime}')
+    print(f'	 - day_end_datetime is {day_end_datetime}')
+    logging.info(f'	 - day_end_datetime is {day_end_datetime}')
+    print(f'	 - day_start_datetime is {day_start_datetime}')
+    logging.info(f'	 - day_start_datetime is {day_start_datetime}')
 
     # Check if now is sooner than the market opening datetime
     if dt.datetime.now() < market_open_time:
@@ -263,8 +263,8 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                     # If now is less than the autorestart datetime
                     if (dt.datetime.now() < auto_restart_datetime_before_end):
                         # Run the app
-                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency,
+                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                     # If now is higher than the auto-restart datetime
                     else:
                         # Break the while loop
@@ -278,8 +278,8 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                     # If now is sooner than the day datetime before the day closes
                     if (dt.datetime.now() < day_datetime_before_end):
                         # Run the app
-                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency,
+                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                     # If now is later than the day datetime before the day closes
                     else:
                         # Break the while loop
@@ -290,8 +290,8 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                     # If now is later than the day datetime before the day closes and sooner than the trading day end datetime
                     if (dt.datetime.now() >= day_datetime_before_end) and (dt.datetime.now() < trading_day_end_datetime):
                         # Run the app
-                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency,
+                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                     # If now is later than the trading day end datetime
                     else:
                         # Break the while loop
@@ -301,8 +301,8 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                     # If now is later than the trading day end datetime and sooner than the day end datetime
                     if (dt.datetime.now() >= trading_day_end_datetime) and (dt.datetime.now() < day_end_datetime):
                         # Run the app
-                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                        run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency,
+                                    trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                     # If now is later than the day-end datetime
                     else:
                         # Break the while loop
@@ -321,7 +321,7 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                 if (dt.datetime.now() <= day_datetime_before_end):
                     # Run the app
                     run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                 # If now is later than the day datetime before the day closes
                 else:
                     # Break the while loop
@@ -332,7 +332,7 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                 if (dt.datetime.now() >= day_datetime_before_end) and (dt.datetime.now() < trading_day_end_datetime): 
                     # Run the app
                     run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                 # If now is later than the trading day end datetime
                 else:
                     # Break the while loop
@@ -343,7 +343,7 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
                 if (dt.datetime.now() >= trading_day_end_datetime) and (dt.datetime.now() < day_end_datetime):
                     # Run the app
                     run_app(host, port, account, client_id, timezone, now_, account_currency, symbol,  historical_data_address, base_df_address, data_frequency, 
-                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail)
+                            trading_day_end_datetime, day_end_datetime, previous_day_start_datetime, day_start_datetime, market_open_time, market_close_time, train_span, test_span, trail, leverage)
                     
                 # If now is later than the day-end datetime
                 else:
@@ -353,6 +353,7 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
             print("Let's wait until the trading week close datetime arrives")
             logging.info("Let's wait until the trading week close datetime arrives")
             while (dt.datetime.now() >= day_end_datetime) and (dt.datetime.now() < day_start_datetime): continue
+
 
 def main():
 
@@ -385,6 +386,7 @@ def main():
         password = variables['password'] # Email password
         seed = variables['seed']
         trail = variables.get('trail', False) # Optional, defaults to False
+        leverage = variables.get('leverage', 1) # Optional, defaults to 1
 
     except KeyError as e:
         logging.error(f"Essential variable {e} not found in user_config/main.py. Please define it.")
@@ -475,45 +477,45 @@ def main():
     # Logic for historical data download and initial optimization
     if not os.path.exists(historical_minute_data_address):
         print('='*100 + "\nCreating the whole historical minute-frequency data...\n" + '='*100)
-        logging.info('Creating the whole historical minute-frequency data...')
+        logging.info('Creating the whole historical minute-frequency data...\n')
         # Note: sdd.run_hist_data_download_app's 2nd arg `historical_data_address` is for the *resampled* output name
         sdd.run_hist_data_download_app(historical_minute_data_address, resampled_historical_data_address, symbol, timezone, data_frequency, 'false', '10 D', train_span, market_open_time)
 
         print('='*100 + "\nOptimizing the strategy parameters (initial)...\n" + '='*100)
-        logging.info('Optimizing the strategy parameters (initial)...')
+        logging.info('Optimizing the strategy parameters (initial)...\n')
         stra.strategy_parameter_optimization(*stra_func_params)
         with open(model_pickle_path, 'wb') as handle:
             pickle.dump({'stra_opt_done_for_week': True, 'date': date_for_model_name.isoformat()}, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
         print('Updating historical minute-frequency data...')
-        logging.info('Updating historical minute-frequency data...')
+        logging.info('Updating historical minute-frequency data...\n')
         sdd.run_hist_data_download_app(historical_minute_data_address, resampled_historical_data_address, symbol, timezone, data_frequency, 'true', '10 D', train_span, market_open_time)
 
         if not os.path.exists(model_pickle_path):
             print('='*100 + "\nOptimizing the strategy parameters for the current week...\n" + '='*100)
-            logging.info('Optimizing the strategy parameters for the current week...')
+            logging.info('Optimizing the strategy parameters for the current week...\n')
             stra.strategy_parameter_optimization(*stra_func_params)
             with open(model_pickle_path, 'wb') as handle:
                 pickle.dump({'stra_opt_done_for_week': True, 'date': date_for_model_name.isoformat()}, handle, protocol=pickle.HIGHEST_PROTOCOL)
         else:
             print(f"Strategy parameters already optimized for the week of {market_open_time.date()} (model file: {model_pickle_path}).")
-            logging.info(f"Strategy parameters already optimized for week of {market_open_time.date()}.")
+            logging.info(f"Strategy parameters already optimized for week of {market_open_time.date()}.\n")
 
     # Database creation
     database_path = os.path.join(data_dir, "database.xlsx")
     if not os.path.exists(database_path):
         print('='*100 + "\nCreating the trading information database...\n" + '='*100)
-        logging.info('Creating the trading information database...')
+        logging.info('Creating the trading information database...\n')
         cd.create_trading_info_workbook(smtp_username, to_email, password) # Assumes create_database writes to data/database.xlsx & data/email_info.xlsx
 
     print('='*100 + "\nRunning the trading app for the week...\n" + '='*100)
-    logging.info('Running the trading app for the week...')
+    logging.info('Running the trading app for the week...\n')
     run_trading_setup_loop(host, port, account, client_id, data_frequency, london_start_hour, local_restart_hour, timezone, dt.datetime.now(), account_currency, symbol,
-                           resampled_historical_data_address, base_df_address, train_span, 1, trail) # test_span=1 for live trading
+                           resampled_historical_data_address, base_df_address, train_span, 1, trail, leverage) # test_span=1 for live trading
 
     # Post-week activities
     print('='*100 + "\nUpdating minute-frequency and resampled data post-trading week...\n" + '='*100)
-    logging.info('Updating minute-frequency and resampled data post-trading week...')
+    logging.info('Updating minute-frequency and resampled data post-trading week...\n')
     sdd.run_hist_data_download_app(historical_minute_data_address, resampled_historical_data_address, symbol, timezone, data_frequency, 'true', '10 D', train_span, market_open_time)
 
     # Prepare for next week's optimization check
@@ -526,7 +528,7 @@ def main():
 
     if not os.path.exists(next_week_model_pickle_path):
         print('='*100 + "\nOptimizing strategy parameters for the upcoming week...\n" + '='*100)
-        logging.info('Optimizing strategy parameters for the upcoming week...')
+        logging.info('Optimizing strategy parameters for the upcoming week...\n')
 
         stra_opt_pass_variables_next_week = stra_opt_pass_variables.copy()
         stra_opt_pass_variables_next_week['market_open_time'] = next_week_market_open_time
@@ -547,7 +549,7 @@ def main():
             pickle.dump({'stra_opt_done_for_week': True, 'date': date_for_next_model_name.isoformat()}, handle, protocol=pickle.HIGHEST_PROTOCOL)
     else:
          print(f"Strategy parameters already optimized for upcoming week of {next_week_market_open_time.date()}.")
-         logging.info(f"Strategy parameters already optimized for upcoming week of {next_week_market_open_time.date()}.")
+         logging.info(f"Strategy parameters already optimized for upcoming week of {next_week_market_open_time.date()}.\n")
 
 
 main()

@@ -22,9 +22,9 @@ from ibapi.wrapper import EWrapper
 class trading_app(EClient, EWrapper):
                     
     # Initialize the class - and inherited classes
-    def __init__(self, logging, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address, 
-                 market_open_time, market_close_time, 
-                 previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail):
+    def __init__(self, logging, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,
+                 market_open_time, market_close_time,
+                 previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail, leverage):
         
         # Initialize the class from parents
         EClient.__init__(self, self)
@@ -178,13 +178,16 @@ class trading_app(EClient, EWrapper):
         # Set the trailing stop loss boolean
         self.trail = trail
         
+        # Set the leverage for the portfolio
+        self.leverage = leverage
+        
         # Set the strategy end to False
         self.strategy_end = False
         
         # Set the logging as part of the setup
         self.logging = logging
         
-    def error(self, reqId, code, msg, advancedOrderRejectJson=''):
+    def error(self, reqId, code, msg, *args, **kwargs):
         ''' Called if an error occurs '''
         self.errors_dict[code] = msg
         print('Error: {} - {} - {}'.format(reqId, code, msg))
