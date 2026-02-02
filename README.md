@@ -28,7 +28,7 @@ This monorepo is designed to be extended with setups for any broker or asset cla
     ```
 2.  **Navigate to a setup directory:**
     ```bash
-    cd ibkr-crypto
+    cd ibkr-forex
     ```
 3.  **Follow the instructions** in the `README.md` and `doc/` folder within the specific setup directory to configure and run your trading bot.
 
