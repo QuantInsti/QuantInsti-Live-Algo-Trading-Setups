@@ -1,6 +1,6 @@
-# IBKR Multi-Asset Trading Setup
+# QuantInsti Live Algo Trading Setups
 
-This repository now centers on the Interactive Brokers multi-asset live trading setup. The active framework supports Forex, futures, spot metals, and crypto inside one portfolio process, with a configurable strategy layer, scheduled optimization, and automated reporting.
+This repository provides production-ready trading frameworks for Interactive Brokers (IBKR). Each setup is designed for live execution with automated data management, configurable strategies, and robust error handling.
 
 ## Contributors
 - Author: [José Carlos Gonzáles Tanaka](https://www.linkedin.com/in/jose-carlos-gonzales-tanaka/)
@@ -8,39 +8,35 @@ This repository now centers on the Interactive Brokers multi-asset live trading 
 
 ## Repository Focus
 
-The main setup is:
+The repository includes three specialized trading setups:
 
 -   **Multi-Asset Trading (`ibkr-multi-asset/`)**: A strategy-agnostic framework for trading FX, MES futures, XAUUSD spot metals, and crypto with a unified portfolio engine.
+-   **Forex Trading (`ibkr-forex/`)**: A dedicated framework optimized for currency pairs and FX-specific execution logic.
+-   **Stock Trading (`ibkr-stock/`)**: A modular setup for systematic equity trading with integrated contract details and data acquisition utilities.
 
-Legacy IBKR examples are still present in `ibkr-forex/` and `ibkr-stock/`, but the current maintained workflow and documentation target `ibkr-multi-asset/`.
+## Key Features
 
-## Features
-
--   **Unified Portfolio Engine**: The multi-asset setup processes all configured asset classes simultaneously, enabling portfolio-level allocation and rebalancing.
--   **Strategy-Agnostic Framework**: The core engine is decoupled from specific trading logic. Users can implement or swap entire strategies by modifying `user_config/strategy.py` without altering source code.
--   **Asset-Specific Frequencies**: Supports different timeframes (e.g., 4h, 1D) for different assets within the same setup.
--   **Automated PDF Reporting**: Generates comprehensive performance reports automatically every trading cycle.
--   **Self-Healing Configuration**: Includes robust default fallbacks for parameters, ensuring safe operation even if user configurations are incomplete.
--   **Modular Structure**: The runnable setup is self-contained under `ibkr-multi-asset/`.
--   **User Configuration**: Provides straightforward ways to configure strategy, credentials, and runtime parameters without editing core engine files.
--   **Data Management**: Includes utilities for historical data download and management.
--   **Advanced Risk Control**: Implements dynamic ATR stops, margin scaling, and regime-based filters.
+-   **Unified Execution Engines**: Production-grade frameworks supporting concurrent execution across multiple asset classes or focused single-asset strategies.
+-   **Strategy-Agnostic Architecture**: Decoupled core engines from strategy logic, allowing users to implement or swap strategies via `user_config/` without modifying the underlying framework.
+-   **Automated Data Infrastructure**: Integrated utilities for bulk historical data acquisition and local data management across all setups.
+-   **Performance Analytics & Reporting**: Automated generation of performance metrics and reports for portfolio monitoring.
+-   **Robust Error Recovery**: Self-healing configuration with default parameter fallbacks and connection monitoring to ensure operational continuity.
 
 ## Architecture
 
-```text
-QuantInsti-Live-Algo-Trading-Setups/
-├── ibkr-multi-asset/
-│   ├── src/ibkr_multi_asset/   # Core engine, broker integration, reporting
-│   ├── user_config/            # Account settings, universe, strategy selection
-│   ├── doc/                    # Setup and developer documentation
-│   └── res/                    # Images used by the docs
-├── ibkr-forex/                 # Legacy example
-├── ibkr-stock/                 # Legacy example
-├── pyproject.toml              # Repository metadata
-├── LICENSE.md
-└── README.md
-```
+The project is organized to separate the core trading engine from user-specific configurations and strategies.
+
+### Multi-Asset Setup (`ibkr-multi-asset/`)
+-   **`src/ibkr_multi_asset/`**: Core engine, portfolio rebalancing, and PDF reporting logic.
+-   **`user_config/`**: Primary entry point (`main.py`) and strategy implementation.
+
+### Forex Setup (`ibkr-forex/`)
+-   **`src/ibkr_forex/`**: Core engine optimized for FX-specific order types and data handling.
+-   **`user_config/`**: Connection settings and Forex strategy logic.
+
+### Stock Setup (`ibkr-stock/`)
+-   **`src/ibkr_stock/`**: Core engine featuring contract detail utilities and equity data management.
+-   **`user_config/`**: Portfolio settings and equity strategy logic.
 
 ## Getting Started
 
@@ -48,13 +44,12 @@ QuantInsti-Live-Algo-Trading-Setups/
     ```bash
     git clone https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups
     ```
-2.  **Move into the maintained setup directory**:
-    ```bash
-    cd QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset
-    ```
-3.  **Review the setup guide** in `doc/Start_here_documentation.md`.
-4.  **Set your local credentials and account values** in `user_config/main.py` or through environment variables before running the bot.
-5.  **Start the application**:
+2.  **Select a setup directory**:
+    Navigate to `ibkr-multi-asset/`, `ibkr-forex/`, or `ibkr-stock/` depending on your trading requirements.
+3.  **Review the documentation**:
+    Each setup includes a `doc/` folder with detailed setup and strategy development guides.
+4.  **Configure environment**: Set your credentials in `user_config/main.py` or via environment variables.
+5.  **Execution**: Launch the trading system:
     ```bash
     python user_config/main.py
     ```

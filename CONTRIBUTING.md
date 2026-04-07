@@ -1,23 +1,39 @@
-# Contributing to QuantInsti IBKR Multi-Asset Trading Setup
+# Contributing to QuantInsti Live Algo Trading Setups
 
-Thank you for your interest in contributing to this repository. The actively maintained trading workflow lives in `ibkr-multi-asset/`, and contributions should default to that setup unless a change is explicitly intended for one of the legacy examples.
+We welcome contributions to this project. This repository provides production-ready trading frameworks for Multi-Asset, Forex, and Stock trading using Interactive Brokers.
 
 ## Code of Conduct
 
-This project and everyone participating in it is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to uphold this code.
+All contributors and participants are expected to adhere to our [Code of Conduct](CODE_OF_CONDUCT.md). Professionalism and mutual respect are foundational to this community.
 
 ## How to Contribute
 
-Start with the multi-asset setup documentation and contribution notes:
+We encourage contributions across all three primary setups:
 
--   [ibkr-multi-asset/CONTRIBUTING.md](ibkr-multi-asset/CONTRIBUTING.md)
-
-If you are intentionally working on one of the legacy examples, use the guidance in that specific folder.
+1.  **Identify an Area for Contribution**: Check the [issue tracker](https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups/issues) or propose a new enhancement.
+2.  **Select a Setup**:
+    -   **Multi-Asset (`ibkr-multi-asset/`)**: Strategy-agnostic portfolio engine.
+    -   **Forex (`ibkr-forex/`)**: Optimized currency trading framework.
+    -   **Stock (`ibkr-stock/`)**: Systematic equity trading setup.
+3.  **Review Sub-module Guidelines**: For detailed technical instructions, development setup, and testing protocols, please refer to the `CONTRIBUTING.md` within each respective directory.
+4.  **Submit a Pull Request**:
+    -   Fork the repository and create a feature branch.
+    -   Ensure your code adheres to standard Python (PEP 8) style guidelines.
+    -   Include relevant tests for new features or bug fixes.
+    -   Update any affected documentation within the `doc/` or `README` files.
 
 ## Reporting Issues
 
-When you report issues, specify whether the change applies to `ibkr-multi-asset`, `ibkr-forex`, or `ibkr-stock`.
+When reporting bugs or requesting features, please provide:
+-   A clear, descriptive title and summary.
+-   The specific setup affected (`ibkr-multi-asset`, `ibkr-forex`, or `ibkr-stock`).
+-   Steps to reproduce (if reporting a bug).
+-   Environment details (Python version, operating system, etc.).
 
-## Questions?
+## Communication
 
-If you have general questions about contributing, open an issue and mention the affected setup.
+For complex architectural changes, we recommend opening a "Discussion" issue first to ensure the proposal aligns with the project's long-term roadmap.
+
+---
+
+Thank you for helping us build a more robust algorithmic trading ecosystem.

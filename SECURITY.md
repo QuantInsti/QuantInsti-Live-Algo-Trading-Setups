@@ -11,7 +11,7 @@ We release patches to fix security vulnerabilities. Which versions are eligible 
 
 ## Reporting a Vulnerability
 
-We take the security of the IBKR Multi-Asset Trading Setup seriously. If you believe you have found a security vulnerability, please report it to us as described below.
+We take the security of the QuantInsti Live Algo Trading Setups seriously. If you believe you have found a security vulnerability, please report it to us as described below.
 
 ### **Please do not report security vulnerabilities through public GitHub issues.**
 
@@ -107,7 +107,7 @@ When we receive a security bug report, we will:
 
 ## Security Features
 
-The IBKR Multi-Asset Trading Setup includes several security features:
+The QuantInsti Live Algo Trading Setups includes several security features:
 
 1. **Input Validation**: All your inputs are validated to prevent injection attacks.
 2. **Error Handling**: Comprehensive error handling without exposing sensitive information.
@@ -129,7 +129,7 @@ For security-related questions or concerns:
 
 ## Acknowledgments
 
-We would like to thank all security researchers and users who responsibly report vulnerabilities to us. Your contributions help make the IBKR Multi-Asset Trading Setup more secure for everyone.
+We would like to thank all security researchers and users who responsibly report vulnerabilities to us. Your contributions help make the QuantInsti Live Algo Trading Setups more secure for everyone.
 
 ## Legal
 
@@ -140,4 +140,4 @@ By reporting a vulnerability, you agree that:
 3. You will not attempt to access or modify data without authorization.
 4. You will comply with all applicable laws and regulations.
 
-Thank you for helping keep the IBKR Multi-Asset Trading Setup secure!
+Thank you for helping keep the QuantInsti Live Algo Trading Setups secure!
