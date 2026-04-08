@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "algorithmic-trading-setups"
 version = "1.0.0"
-description = "Repository metadata for the QuantInsti Interactive Brokers multi-asset live trading setup."
+description = "Repository metadata for the QuantInsti Interactive Brokers multi-asset live trading setups."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE.md" }
