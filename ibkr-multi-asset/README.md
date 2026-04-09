@@ -10,12 +10,12 @@
 
 ## Overview
 
-This framework provides a working multi-asset trading setup for a unified universe (**Forex + MES + Gold + Crypto**) using the Interactive Brokers API. It separates engine logic from user strategy logic, supports portfolio rebalancing across asset classes, and generates PDF reports during live operation.
+This framework provides a working multi-asset trading setup for a unified universe (**Forex + Futures + Spot Metals + Crypto + Stocks**) using the Interactive Brokers API. It separates engine logic from user strategy logic, supports portfolio rebalancing across asset classes, and generates PDF reports during live operation.
 
 ## Key Features
 
 ### Unified Multi-Asset Engine
-- **Cross-Asset Support**: Simultaneously trade Forex, Futures, Spot Metals, and Crypto in a single capital pool.
+- **Cross-Asset Support**: Simultaneously trade Forex, Futures, Spot Metals, Crypto, and Stocks in a single capital pool.
 - **IB-Supported Market Coverage**: The setup is not tied to one country or exchange. It can be configured from any operating location to trade assets available through Interactive Brokers, subject to your account permissions, market data subscriptions, and exchange access.
 - **Dynamic Portfolio Rebalancing**: Supports strategy-defined portfolio allocation and margin scaling across all active assets.
 - **Frequency Agnostic**: The engine supports any valid IB bar size (e.g., 1m, 5m, 1h, 1D). Different assets can run on different timeframes within the same setup.
@@ -121,7 +121,10 @@ For questions and support:
 ## Disclaimers
 
 ### Risk Warning
-**Trading forex involves substantial risk and may not be suitable for all investors. The high degree of leverage can work against you as well as for you. Forex markets are highly volatile and can result in significant losses.**
+**Trading leveraged financial instruments involves substantial risk and may not be suitable for all investors. Forex, futures, stocks, metals, and crypto can all result in significant losses.**
+
+### Account Restrictions
+If you include US stock symbols in the multi-asset universe, Interactive Brokers may reject otherwise valid stock orders because of the Pattern Day Trader rule. In practice, this can happen when the securities segment equity is below USD 25,000 and the account attempts frequent intraday equity trading. These rejections are broker-side account restrictions and are separate from the order-construction logic in the setup.
 
 ### Educational Purpose
 This trading setup is provided for **educational purposes only**. You should not consider it as investment advice. You should always:

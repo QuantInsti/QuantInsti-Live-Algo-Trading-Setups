@@ -110,6 +110,12 @@ The engine dynamically handles different market types:
 - **Crypto**: 24/7 sessions, fractional share support, `TRADES` data type.
 - **Futures**: Multiplier-based quantity calculation, tick-size rounding, `TRADES` data type.
 - **Forex/Metals**: 24/5 sessions, unit-based quantity, `BID/ASK` data type.
+- **Stocks**: Exchange-aware contract resolution, primary-exchange support, regular-trading-hours history requests, adjustable tick-size rounding, and optional fractional-share handling.
+
+### Broker-Side Stock Restrictions
+- US stock orders can still be rejected even when the engine constructs them correctly.
+- A common case is Interactive Brokers error 201 triggered by the Pattern Day Trader rule when the securities segment equity is below USD 25,000.
+- When you debug stock-order behavior, distinguish broker/account restrictions from actual engine bugs.
 
 ### Carry-Protection Bridge
 - The engine supports a local `trading_day_origin` in `user_config/main.py`.

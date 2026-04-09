@@ -1,6 +1,6 @@
 ## A setup to trade multiple assets algorithmically
 
-#### This is your “Start here” document to set up your system for trading multiple asset classes (Forex, Futures, Metals, and Crypto) algorithmically.
+#### This is your "Start here" document to set up your system for trading multiple asset classes (Forex, Futures, Metals, Crypto, and Stocks) algorithmically.
 ###### QuantInsti Webpage: https://www.quantinsti.com/
 
 **Version 1.2.0**
@@ -28,22 +28,22 @@
 
 <a id='introduction'></a>
 ## Introduction
-This document describes a Python-based setup for algorithmic multi-asset trading using the Interactive Brokers API. The setup allows you to execute transactions across **Forex, Futures (MES), Spot Metals (XAUUSD), and Cryptocurrency** under one portfolio process.
+This document describes a Python-based setup for algorithmic multi-asset trading using the Interactive Brokers API. The setup allows you to execute transactions across **Forex, Futures (MES), Spot Metals (XAUUSD), Cryptocurrency, and Stocks** under one portfolio process.
 
 The setup is organized so that engine code and user strategy code remain separate, which makes it easier to switch strategies or modify trading logic without rewriting the full live workflow.
 
 - **Selectable Strategy Files**: The active strategy module is selected from `user_config/main.py` with `strategy_file`.
 - **Default Strategy Module**: `strategy.py` contains the mean-reversion portfolio strategy with Markowitz allocation and exposes the interface expected by the engine.
 - **Dual-Mode Execution**: The system automatically detects your universe. 
-    - **Single-Asset Mode**: If you trade only one asset class (e.g., only Crypto), the system bypasses complex portfolio math and allocates 100% of your chosen leverage to that asset.
-    - **Multi-Asset Mode**: If you trade two or more classes (e.g., Forex + Futures), the selected strategy module determines how portfolio capital is allocated across the universe.
-- **Unified Portfolio Engine**: Unlike single-asset setups, this engine processes your entire universe (Forex, MES, XAU, Crypto) in one loop, which allows portfolio-level allocation and coordinated rebalancing across asset classes.
+    - **Single-Asset Mode**: If you trade only one asset class (for example, only Crypto), the system bypasses complex portfolio math and allocates 100% of your chosen leverage to that asset.
+    - **Multi-Asset Mode**: If you trade two or more classes (for example, Forex + Futures or Stocks + Crypto), the selected strategy module determines how portfolio capital is allocated across the universe.
+- **Unified Portfolio Engine**: Unlike single-asset setups, this engine processes your entire universe (Forex, Futures, Metals, Crypto, and Stocks) in one loop, which allows portfolio-level allocation and coordinated rebalancing across asset classes.
 - **Exchange and Location Flexibility**: The setup is not restricted to one country or one exchange. You can run it from any location and configure it for assets available through Interactive Brokers, as long as the account has the required permissions, data subscriptions, and exchange access.
 - **Selectable Strategy Interface**: The core engine is decoupled from the strategy logic. You can change strategies by updating `strategy_file` in `main.py` without editing the engine.
 - **Asset-Specific Frequencies**: The engine is frequency-agnostic. It dynamically requests the required bar size for each asset (e.g., '1m', '15m', '4h', '1D') as defined by the selected strategy file. This allows high-frequency and low-frequency assets to coexist in the same loop.
 - **PDF Reporting**: Automatically generates a multi-page performance report (`portfolio_report.pdf`) every trading period so you can review portfolio analytics from the live run.
 - **Fallback Parameter Handling**: Includes a strategy-side defaults layer. If a parameter is missing or misconfigured in the selected strategy file, the system can still fall back to default values instead of stopping immediately.
-- **Dynamic Market Hours**: Automatically detects the asset class and applies the correct session rules (e.g., 24/7 for Crypto, 23-hour for Futures, 24/5 for Forex).
+- **Dynamic Market Hours**: Automatically detects the asset class and applies the correct session rules (for example, 24/7 for Crypto, 23-hour for Futures, 24/5 for Forex, and exchange-defined hours for Stocks).
 - **Trading-Day Origin Control**: The live engine can start the trading day at a user-defined local time such as `18:00`, which is useful when your operational day does not match the broker's midnight boundary.
 - **Carry-Protection Bridge**: Between the broker reopen and the configured `trading_day_origin`, the engine can restore broker-side stop-loss and take-profit protection for eligible live positions before the normal trading loop starts.
 
@@ -79,15 +79,17 @@ The setup is organized so that engine code and user strategy code remain separat
 1. Install **TWS (Offline Stable)** and **IB API**.
 2. Enable **ActiveX/Socket Clients** and disable **Read-Only API** in TWS Settings.
 3. Ensure **Paper Trading** is configured with real-time market data sharing.
-4. **Margin Requirements**: Trading MES (Futures) and Forex requires a **Margin Account**. Ensure your account permissions are updated.
+4. **Margin Requirements**: Trading futures, leveraged forex, or a stock strategy that depends on margin or frequent intraday turnover may require a **Margin Account** and sufficient equity under IBKR account rules.
 5. **Crypto Permissions**: To trade Crypto, you must have an active **Paxos** integration enabled within your IBKR account settings.
+6. **Stock Permissions**: To trade Stocks in this setup, confirm that your account has the required stock market permissions, market data subscriptions, and exchange access for the symbols you configure.
+7. **Pattern Day Trader Rule**: If you trade US stocks with frequent intraday opens and closes, IBKR may reject otherwise valid stock orders when the securities segment equity is below USD 25,000. These PDT rejections are account-side restrictions, not necessarily problems in the trading setup.
 
 <a id='variables_setup'></a>
 ## Setup of variables
 
 ### main.py (Meta-Parameters)
 - **account**: Your IB account ID (e.g., 'DU1234567').
-- **fx_pairs / futures_symbols / metals_symbols / crypto_symbols**: Define your tradable universe here.
+- **fx_pairs / futures_symbols / metals_symbols / crypto_symbols / stock_symbols**: Define your tradable universe here.
 - **timezone**: Your local timezone (e.g., 'America/New_York').
 - **port**: 7497 for Paper, 7496 for Live.
 - **trading_day_origin**: Local start time of your trading day (for example, `"18:00"` in `America/Lima`).
@@ -95,6 +97,8 @@ The setup is organized so that engine code and user strategy code remain separat
 - **strict_targets_validation**: When `True`, the engine validates portfolio targets before sending live orders.
 - **strategy_file**: The user strategy module to load, for example `"strategy.py"` or another module you add under `user_config/`.
 - **optimization_frequency**: Controls when `strategy_parameter_optimization()` reruns inside the live loop. Supported values are `"daily"` and `"weekly"`.
+- **stock_exchange / stock_currency / stock_primary_exchange / stock_primary_exchanges**: Control how stock contracts are resolved through IBKR when you include symbols in `stock_symbols`.
+- **stock_fractional_shares / stock_default_quantity_step / stock_tick_size**: Control quantity rounding and optional stock price-step overrides for stock orders.
 
 ### strategy.py (Strategy Parameters)
 - **strategy.py**: The default mean-reversion plus Markowitz strategy.
