@@ -23,7 +23,7 @@ User guide
 """
 
 # Connection and account settings
-account = os.getenv("IBKR_ACCOUNT", "DU1234567")
+account = os.getenv("IBKR_ACCOUNT", "DU1682711")
 timezone = "America/Lima"
 host = "127.0.0.1"
 port = 7497

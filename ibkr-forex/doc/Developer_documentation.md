@@ -1,6 +1,6 @@
 ## An end-to-end setup to trade forex algorithmically
 
-#### This is your “Guidelines” document to modify and Running the `ib_forex_setup` Trading Code
+#### This is your "Guidelines" document to modify and run the `ibkr-forex` trading code
 ###### QuantInsti Webpage: https://www.quantinsti.com/
 
 **Version 1.0.0**
@@ -10,7 +10,7 @@
 
 ## Disclaimer
 
-#### This document provides instructions for you if you want to modify the source code of the `ib_forex_setup` trading application, rebuild the package, and run your modified setup.
+#### This document provides instructions for you if you want to modify the source code of the `ibkr-forex` trading application, rebuild the package, and run your modified setup.
 
 ## Licensed under the QuantInsti Open License (QOL) v1.1 (the "License").
 - Copyright 2025 QuantInsti Quantitative Learning Pvt. Ltd.
@@ -31,7 +31,7 @@
 <a id='introduction'><a>
 ## 1. Introduction
 
-The `ib_forex_setup` is a Python-based trading application designed for forex trading with Interactive Brokers. Once you make changes to source code files, this little guide focuses on enabling you to:
+The `ibkr-forex` package is a Python-based trading application designed for forex trading with Interactive Brokers. Once you make changes to source code files, this guide focuses on enabling you to:
 1. Build the setup wheel once you tweak anything of the source code.
 2. Force the reinstallation of the setup package in the Python environment.
 3. Run once again your setup with the new changes made.
@@ -43,17 +43,17 @@ You can follow these steps to modify the code, rebuild, reinstall, and run the a
 
 <a id='navigate'><a>
 ### Step 1: Navigate to the Project Root
-You should navigate to the root directory of the `ib_forex_setup` project. This is the directory that contains the `src/` folder. You can check any of the Python files located in the `src/` folder and see which files and their functions you want to modify or tweak.
+You should navigate to the root directory of the `ibkr-forex` project. This is the directory that contains the `src/` folder. You can inspect the Python files located in `src/ibkr_forex/` to decide which files and functions you want to modify.
 
 <a id='modify'><a>
 ### Step 2: Make Your Code Modifications
 
 1.  **Identify the files to modify**:
-    * For **strategy logic** (signals, stop-loss, take-profit, feature engineering): You should edit `ib_forex_setup/samples/strategy.py`.
-    * For **core application logic** (how the engine runs, data handling, IB interactions): You should edit files within `ib_forex_setup/src/ib_forex_setup/`.
-    * For **run parameters** (account, symbol, timezone, etc.): You can modify `ib_forex_setup/samples/main.py`.
+    * For **strategy logic** (signals, stop-loss, take-profit, feature engineering): You should edit `user_config/strategy.py`.
+    * For **core application logic** (how the engine runs, data handling, IB interactions): You should edit files within `src/ibkr_forex/`.
+    * For **run parameters** (account, symbol, timezone, etc.): You can modify `user_config/main.py`.
 
-2.  **Edit the Python files**: You can use your preferred text editor or IDE to make the desired changes to the `.py` files. For example, you might change the logic in `get_signal` within `samples/strategy.py` or adjust parameters in `samples/main.py`.
+2.  **Edit the Python files**: You can use your preferred text editor or IDE to make the desired changes to the `.py` files. For example, you might change the logic in `get_signal` within `user_config/strategy.py` or adjust parameters in `user_config/main.py`.
 
 <a id='build'><a>
 ### Step 3: Build the Package
@@ -62,9 +62,9 @@ Once you have made your changes, you need to rebuild the Python package.
 
 1. **Open a terminal and type the following:**
 ```bash
-cd path_to/ib_forex_setup
+cd path_to/ibkr-forex
 ```
-*(You should replace `path_to/ib_forex_setup` with the actual path to your project.)*
+*(You should replace `path_to/ibkr-forex` with the actual path to your project.)*
 
 2.  **Install the `build` tool (if you haven't already)**:
     ```bash
@@ -72,11 +72,11 @@ cd path_to/ib_forex_setup
     ```
 
 3.  **Build the package**:
-    From the root directory of the `ib_forex_setup` project, you should run:
+    From the root directory of the `ibkr-forex` project, you should run:
     ```bash
     python -m build
     ```
-    This command reads the `pyproject.toml` (or `setup.py`) and creates the package. You will see output in your terminal indicating the build process. Upon completion, a `dist/` directory will be created (or updated) in your project root, containing files like `ib_forex_setup-1.0.0-py3-none-any.whl` (the version number might differ).
+    This command reads the `pyproject.toml` and creates the package. You will see output in your terminal indicating the build process. Upon completion, a `dist/` directory will be created (or updated) in your project root, containing files like `ibkr_forex-1.0.0-py3-none-any.whl` (the version number might differ).
 
 <a id='reinstall'><a>
 ### Step 4: Reinstall the Modified Package
@@ -84,11 +84,11 @@ cd path_to/ib_forex_setup
 To ensure your Python environment uses your newly modified code, you must reinstall the package from the wheel file you just built. The `--force-reinstall` flag is important to ensure the existing version is overwritten.
 
 ```bash
-pip install dist/ib_forex_setup-1.0.0-py3-none-any.whl --force-reinstall
+pip install dist/ibkr_forex-1.0.0-py3-none-any.whl --force-reinstall
 ```
-*(You should adjust the filename `ib_forex_setup-1.0.0-py3-none-any.whl` if your built package has a different version or name. You can check the contents of your `dist/` folder.)*
+*(You should adjust the filename `ibkr_forex-1.0.0-py3-none-any.whl` if your built package has a different version or name. You can check the contents of your `dist/` folder.)*
 
-This step updates the installed `ib_forex_setup` library in your Python environment with the changes you made in the `src/` directory.
+This step updates the installed `ibkr_forex` library in your Python environment with the changes you made in the `src/` directory.
 
 <a id='run'><a>
 ### Step 5: Run the Trading Setup
@@ -96,10 +96,10 @@ This step updates the installed `ib_forex_setup` library in your Python environm
 After successfully reinstalling the package, you can run the main application script.
 
 1.  **Navigate to the directory containing `main.py`**:
-    Based on the project folder, this is located in the `main` directory. 
+    Based on the project folder, this is located in the `user_config` directory.
 
     ```bash
-    cd main 
+    cd user_config
     ```
 
 2.  **Execute the main script**:
@@ -107,7 +107,7 @@ After successfully reinstalling the package, you can run the main application sc
     python main.py
     ```
 
-The application should now run with your modifications. You should check the console output and any generated log files (e.g., in `data/log/`) to verify your changes are active and behaving as expected. The `main.py` script in the `main` folder is set up to import and use the `ib_forex_setup` package you just rebuilt and reinstalled.
+The application should now run with your modifications. You should check the console output and any generated log files (e.g., in `data/log/`) to verify your changes are active and behaving as expected. The `main.py` script in the `user_config` folder is set up to import and use the `ibkr_forex` package you just rebuilt and reinstalled.
 
 <a id='considerations'><a>
 ## 3. Important Considerations
@@ -118,4 +118,4 @@ The application should now run with your modifications. You should check the con
 * **Backup `data/` folder**: The `data/` folder (especially `database.xlsx` and model files in `data/models/`) stores important trading information and trained models. You should back it up regularly, especially before making significant changes or running new optimization processes.
 * **Strategy Optimization**: The `strategy.py` file includes a function `strategy_parameter_optimization()`. If you modify features or core logic used by this optimization, you may need to re-run it to ensure your models are tuned to your new setup. This function saves models like `hmm_model_YYYY_MM_DD.pickle` and `model_object_YYYY_MM_DD.pickle` in the `data/models/` directory.
 
-By following these steps, you can effectively customize the `ib_forex_setup` to your trading needs. You should remember to always proceed with caution, especially when dealing with financial applications.
+By following these steps, you can effectively customize `ibkr-forex` to your trading needs. You should remember to always proceed with caution, especially when dealing with financial applications.

@@ -131,6 +131,20 @@ def ForexContract(symbol,sec_type="CASH",exchange="IDEALPRO"):
     info.currency = symbol[3:]
     return info
 
+def StockContract(symbol, sec_type="STK", exchange="SMART", currency="USD", primary_exchange=None):
+    ''' Function to set the Stock contract object'''
+    if not (isinstance(symbol, str) and 1 <= len(symbol) <= 10 and symbol.replace(".", "").replace("-", "").isalnum()):
+        raise ValueError(f"Stock symbol '{symbol}' must be a valid equity ticker string.")
+
+    info = Contract()
+    info.symbol = symbol.upper()
+    info.secType = sec_type
+    info.exchange = exchange
+    info.currency = currency
+    if primary_exchange:
+        info.primaryExchange = str(primary_exchange).upper()
+    return info
+
 def FuturesContract(symbol,sec_type="FUT",exchange="CME",multiplier=5,expiry=None):
     ''' Function to set the Futures contract object'''
     # Set the variable as a Contract object
@@ -189,6 +203,15 @@ def build_contract_from_spec(asset_spec):
     if asset_class == "forex":
         return ForexContract(symbol, sec_type="CASH", exchange=exchange or "IDEALPRO")
 
+    if asset_class in {"stock", "stocks", "equity", "equities", "stk"}:
+        return StockContract(
+            symbol,
+            sec_type="STK",
+            exchange=exchange or "SMART",
+            currency=currency,
+            primary_exchange=asset_spec.get("primary_exchange") or asset_spec.get("primaryExchange"),
+        )
+
     if asset_class in {"future", "futures", "fut"}:
         multiplier = asset_spec.get("multiplier")
         if multiplier in (None, ""):
@@ -227,6 +250,14 @@ def build_contract_from_spec(asset_spec):
     sec_type = str(asset_spec.get("secType", "") or "").upper()
     if sec_type == "CASH":
         return ForexContract(symbol, sec_type="CASH", exchange=exchange or "IDEALPRO")
+    if sec_type == "STK":
+        return StockContract(
+            symbol,
+            sec_type="STK",
+            exchange=exchange or "SMART",
+            currency=currency,
+            primary_exchange=asset_spec.get("primary_exchange") or asset_spec.get("primaryExchange"),
+        )
     if sec_type == "FUT":
         return FuturesContract(symbol, sec_type="FUT", exchange=exchange or "CME", multiplier=asset_spec.get("multiplier", 5), expiry=asset_spec.get("expiry"))
     if sec_type == "CMDTY":

@@ -489,6 +489,18 @@ def run_hist_data_download_app(historical_minute_data, historical_data_address, 
             "currency": variables.get("crypto_currency", "USD"),
             "sec_type": "CRYPTO"
         }
+    elif symbol_upper in [s.upper() for s in variables.get('stock_symbols', [])]:
+        stock_primary_exchanges = variables.get("stock_primary_exchanges", {}) or {}
+        asset_spec = {
+            "symbol": symbol_upper, "asset_class": "stock",
+            "exchange": variables.get("stock_exchange", "SMART"),
+            "currency": variables.get("stock_currency", "USD"),
+            "sec_type": "STK",
+            "primary_exchange": stock_primary_exchanges.get(symbol_upper, variables.get("stock_primary_exchange", "NASDAQ")),
+            "fractional_shares": bool(variables.get("stock_fractional_shares", False)),
+            "quantity_step": float(variables.get("stock_default_quantity_step", 0.0001 if bool(variables.get("stock_fractional_shares", False)) else 1.0)),
+            "tick_size": float(variables.get("stock_tick_size", 0.01)),
+        }
     
     if asset_spec is None:
         print(f"Warning: Symbol {symbol} not found in main.py universe. Defaulting to Forex.")

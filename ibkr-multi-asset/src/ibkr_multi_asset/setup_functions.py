@@ -771,7 +771,7 @@ def _contract_for_order(app):
 
 def _contract_for_history(app):
     asset_class = str(app.asset_spec.get('asset_class', 'forex')).lower()
-    if asset_class in {'futures', 'future', 'fut', 'crypto', 'metals', 'metal'}:
+    if asset_class in {'futures', 'future', 'fut', 'crypto', 'metals', 'metal', 'stock', 'stocks', 'equity', 'equities', 'stk'}:
         if getattr(app, 'resolved_contract', None) is not None:
             return deepcopy(app.resolved_contract)
         details = getattr(app, 'contract_details_df', None)
@@ -822,7 +822,7 @@ def download_hist_data(app, params):
                                durationStr=duration,
                                barSizeSetting=candle_size,
                                whatToShow=whatToShow,
-                               useRTH=False,
+                               useRTH=1 if _use_regular_trading_hours_for_history(app) else 0,
                                formatDate=1,
                                keepUpToDate=False,
                                # EClient function to request contract details
@@ -889,6 +889,8 @@ def _history_request_params(app, duration):
         return [[0, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
     if asset_class == "metals":
         return [[0, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
+    if asset_class == "stock":
+        return [[0, duration, candle_size, "ADJUSTED_LAST", "ADJUSTED_LAST", ""]]
     if asset_class == "crypto":
         total_days = min(int(duration.split()[0]), _max_bootstrap_days_per_cycle(app))
         chunk_days = _crypto_chunk_days(app)
@@ -908,6 +910,11 @@ def _history_request_params(app, duration):
             offset_days += this_chunk_days
         return params
     return [[0, duration, candle_size, "TRADES", "TRADES", ""]]
+
+
+def _use_regular_trading_hours_for_history(app):
+    asset_class = str(app.asset_spec.get("asset_class", "forex")).lower()
+    return asset_class == "stock"
 
 
 def _minimum_history_days_for_asset(app):
@@ -1095,7 +1102,11 @@ def _fallback_last_price(app):
 
 def _is_integer_only_asset(app):
     asset_class = str(app.asset_spec.get('asset_class', 'forex')).lower()
-    return asset_class in ('futures', 'future', 'fut')
+    if asset_class in ('futures', 'future', 'fut'):
+        return True
+    if asset_class == 'stock':
+        return float(_quantity_step_for_asset(app)) >= 1.0
+    return False
 
 
 def _quantity_step_for_asset(app):
@@ -1118,6 +1129,10 @@ def _quantity_step_for_asset(app):
     if asset_class == 'crypto':
         return 1e-8
     if asset_class in ('futures', 'future', 'fut'):
+        return 1.0
+    if asset_class == 'stock':
+        if bool(getattr(app, 'asset_spec', {}).get('fractional_shares', False)):
+            return 0.0001
         return 1.0
     if asset_class in ('metals', 'metal'):
         return 0.001
@@ -1293,6 +1308,9 @@ def _uses_direct_contract_target(app):
 
 
 def _contract_min_tick(app):
+    explicit_tick = pd.to_numeric(pd.Series([getattr(app, 'asset_spec', {}).get('tick_size', np.nan)]), errors='coerce').iloc[0]
+    if np.isfinite(explicit_tick) and explicit_tick > 0:
+        return float(explicit_tick)
     details = getattr(app, 'contract_details_df', None)
     if isinstance(details, pd.DataFrame) and not details.empty and 'Symbol' in details.columns and 'MinTick' in details.columns:
         same = details[details['Symbol'].astype(str).str.upper() == str(getattr(app, 'ticker', '')).upper()]
@@ -1313,6 +1331,8 @@ def _contract_min_tick(app):
         return float(fallback_ticks[ticker])
     asset_class = str(getattr(app, 'asset_spec', {}).get('asset_class', '')).lower()
     if asset_class == 'crypto':
+        return 0.01
+    if asset_class == 'stock':
         return 0.01
     if asset_class == 'forex':
         return 0.005 if ticker.endswith('JPY') else 0.00005
@@ -2085,10 +2105,7 @@ def send_market_order(app, order_id, quantity):
                     order_qty = live_qty
             _clear_order_submission_failures(app)
             if asset_class == 'crypto':
-                # Use Marketable Limit order with Override to bypass TWS precautionary blocks.
-                # For BUY, we set limit price very high; for SELL very low.
-                last_val = float(getattr(app, 'last_value', 0.0))
-                lmt_price = round(last_val * (2.0 if direction == 'BUY' else 0.5), 2)
+                lmt_price = _crypto_marketable_limit_price(app, direction)
                 app.placeOrder(order_id, _contract_for_order(app), ibf.cryptoLimitOrder(direction, round(float(order_qty), 8), lmt_price, override=True))
             else:
                 app.placeOrder(order_id, _contract_for_order(app), ibf.marketOrder(direction, order_qty))
@@ -2126,10 +2143,7 @@ def send_market_order(app, order_id, quantity):
             asset_class = str(app.asset_spec.get('asset_class', 'forex')).lower()
             _clear_order_submission_failures(app)
             if asset_class == 'crypto':
-                # Use Marketable Limit order with Override to bypass TWS precautionary blocks.
-                # For BUY, we set limit price very high; for SELL very low.
-                last_val = float(getattr(app, 'last_value', 0.0))
-                lmt_price = round(last_val * (2.0 if direction == 'BUY' else 0.5), 2)
+                lmt_price = _crypto_marketable_limit_price(app, direction)
                 app.placeOrder(order_id, _contract_for_order(app), ibf.cryptoLimitOrder(direction, round(float(order_qty), 8), lmt_price, override=True))
             else:
                 app.placeOrder(order_id, _contract_for_order(app), ibf.marketOrder(direction, order_qty))
@@ -2204,12 +2218,12 @@ def get_current_quantity(app):
     # app.capital has already been scaled by app.leverage in portfolio_allocation(app)
     target_notional = app.capital
     
-    if app.last_value <= 0 and asset_class in ("futures", "crypto", "metals"):
+    if app.last_value <= 0 and asset_class in ("futures", "crypto", "metals", "stock"):
         app.current_quantity = 0.0
     elif asset_class == "futures":
         # For futures: contracts = Target Notional / (Price * Multiplier)
         app.current_quantity = (target_notional) / (app.last_value * multiplier)
-    elif asset_class in ("crypto", "metals"):
+    elif asset_class in ("crypto", "metals", "stock"):
         # For crypto and spot metals (XAUUSD): units = Target Notional / Price
         app.current_quantity = (target_notional) / app.last_value
     else:
@@ -2543,6 +2557,8 @@ ORDER_SUBMISSION_FAILURE_CODES = {
     201,
 }
 
+CRYPTO_RECONCILE_MAX_ATTEMPTS = 8
+
 
 def _clear_order_submission_failures(app):
     for code in ORDER_SUBMISSION_FAILURE_CODES:
@@ -2566,6 +2582,21 @@ def _order_submission_failures(app):
         for code in ORDER_SUBMISSION_FAILURE_CODES
         if code in app.errors_dict
     }
+
+
+def _crypto_marketable_limit_price(app, direction):
+    reference_price = _best_live_market_price(app)
+    if not np.isfinite(reference_price) or float(reference_price) <= 0:
+        reference_price = pd.to_numeric(pd.Series([getattr(app, 'last_value', np.nan)]), errors='coerce').iloc[0]
+    if not np.isfinite(reference_price) or float(reference_price) <= 0:
+        reference_price = 1.0
+
+    if str(direction).upper() == 'BUY':
+        raw_price = float(reference_price) * 2.0
+        return _round_price_to_contract_tick(app, raw_price, side='up')
+
+    raw_price = float(reference_price) * 0.5
+    return _round_price_to_contract_tick(app, raw_price, side='down')
 
 
 def _contract_order_types(app):
@@ -2599,6 +2630,52 @@ def _latest_position_for_symbol(app, refresh=True, verbose=True):
     if same_contract.empty:
         return 0.0
     return float(pd.to_numeric(same_contract['Position'], errors='coerce').fillna(0.0).iloc[-1])
+
+
+def _reconcile_crypto_live_position(app, target_signed_quantity):
+    previous_distance = None
+
+    for attempt in range(1, CRYPTO_RECONCILE_MAX_ATTEMPTS + 1):
+        live_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+        distance = abs(float(target_signed_quantity) - live_quantity)
+        if np.isclose(distance, 0.0, atol=1e-8):
+            return live_quantity, True
+
+        executable_delta_quantity = _normalize_order_quantity(app, abs(float(target_signed_quantity) - live_quantity))
+        if executable_delta_quantity <= 0:
+            return live_quantity, True
+
+        original_signal = float(app.signal)
+        app.signal = float(np.sign(float(target_signed_quantity) - live_quantity))
+        try:
+            market_sent = send_market_order(app, _next_order_id(app), executable_delta_quantity)
+        finally:
+            app.signal = original_signal
+
+        if not market_sent:
+            refreshed_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+            return refreshed_quantity, False
+
+        time.sleep(2)
+        refreshed_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+        refreshed_distance = abs(float(target_signed_quantity) - refreshed_quantity)
+
+        append_runtime_audit(
+            app,
+            'crypto_reconcile',
+            f'attempt={attempt}, target={target_signed_quantity}, before={live_quantity}, after={refreshed_quantity}',
+        )
+
+        if np.isclose(refreshed_distance, 0.0, atol=1e-8):
+            return refreshed_quantity, True
+
+        if previous_distance is not None and refreshed_distance >= previous_distance - 1e-8 and refreshed_distance >= distance - 1e-8:
+            return refreshed_quantity, False
+
+        previous_distance = refreshed_distance
+
+    final_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+    return final_quantity, np.isclose(abs(float(target_signed_quantity) - final_quantity), 0.0, atol=1e-8)
     
 def send_orders_as_bracket(app, order_id, quantity, mkt_order, sl_order, tp_order, rm_quantity=None):
     ''' Function to send the orders as a bracket'''
@@ -2819,6 +2896,9 @@ def restore_carry_risk_management(app):
 def _reconcile_direct_target_position(app, order_id):
     target_signed_quantity = float(app.signal) * float(app.current_quantity)
     previous_quantity = float(app.previous_quantity)
+    if _is_crypto_asset(app):
+        previous_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+        app.previous_quantity = previous_quantity
     delta_quantity = target_signed_quantity - previous_quantity
     executable_delta_quantity = _normalize_order_quantity(app, abs(delta_quantity))
     effective_signed_quantity = target_signed_quantity
@@ -2827,12 +2907,18 @@ def _reconcile_direct_target_position(app, order_id):
         cancel_risk_management_previous_orders(app)
 
     if executable_delta_quantity > 0 and not np.isclose(delta_quantity, 0.0, atol=1e-8):
-        original_signal = float(app.signal)
-        app.signal = float(np.sign(delta_quantity))
-        market_sent = send_market_order(app, _next_order_id(app), executable_delta_quantity)
-        app.signal = original_signal
-        if not market_sent:
-            return
+        if _is_crypto_asset(app):
+            reconciled_quantity, market_sent = _reconcile_crypto_live_position(app, target_signed_quantity)
+            effective_signed_quantity = reconciled_quantity
+            if not market_sent:
+                return
+        else:
+            original_signal = float(app.signal)
+            app.signal = float(np.sign(delta_quantity))
+            market_sent = send_market_order(app, _next_order_id(app), executable_delta_quantity)
+            app.signal = original_signal
+            if not market_sent:
+                return
     elif executable_delta_quantity <= 0 and app.risk_management_bool:
         live_quantity = float(_latest_position_for_symbol(app))
         if not np.isclose(live_quantity, 0.0, atol=1e-8) and np.sign(live_quantity) == np.sign(target_signed_quantity):
@@ -2867,6 +2953,9 @@ def _reconcile_direct_target_position(app, order_id):
 def _reconcile_signed_target_position(app, order_id):
     target_signed_quantity = float(app.signal) * float(app.current_quantity)
     previous_quantity = float(app.previous_quantity)
+    if _is_crypto_asset(app):
+        previous_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+        app.previous_quantity = previous_quantity
     delta_quantity = target_signed_quantity - previous_quantity
     executable_delta_quantity = _normalize_order_quantity(app, abs(delta_quantity))
     effective_signed_quantity = target_signed_quantity
@@ -2875,12 +2964,18 @@ def _reconcile_signed_target_position(app, order_id):
         cancel_risk_management_previous_orders(app)
 
     if executable_delta_quantity > 0 and not np.isclose(delta_quantity, 0.0, atol=1e-8):
-        original_signal = float(app.signal)
-        app.signal = float(np.sign(delta_quantity))
-        market_sent = send_market_order(app, _next_order_id(app), executable_delta_quantity)
-        app.signal = original_signal
-        if not market_sent:
-            return
+        if _is_crypto_asset(app):
+            reconciled_quantity, market_sent = _reconcile_crypto_live_position(app, target_signed_quantity)
+            effective_signed_quantity = reconciled_quantity
+            if not market_sent:
+                return
+        else:
+            original_signal = float(app.signal)
+            app.signal = float(np.sign(delta_quantity))
+            market_sent = send_market_order(app, _next_order_id(app), executable_delta_quantity)
+            app.signal = original_signal
+            if not market_sent:
+                return
     elif executable_delta_quantity <= 0 and app.risk_management_bool:
         live_quantity = float(_latest_position_for_symbol(app))
         if not np.isclose(live_quantity, 0.0, atol=1e-8) and np.sign(live_quantity) == np.sign(target_signed_quantity):
@@ -3014,11 +3109,23 @@ def send_orders(app):
         if np.isclose(float(app.previous_quantity), target_signed_quantity, atol=1e-8):
             if app.signal != 0 and app.previous_quantity != 0 and app.risk_management_bool:
                 cancel_risk_management_previous_orders(app)
-                app.risk_management_position_sign = float(np.sign(target_signed_quantity))
+                rm_quantity = abs(target_signed_quantity)
+                rm_sign = float(np.sign(target_signed_quantity))
+                if _is_crypto_asset(app):
+                    live_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
+                    if np.isclose(live_quantity, 0.0, atol=1e-8):
+                        print(f'[{app.ticker}] No confirmed crypto position is live. Skipping risk-management refresh...')
+                        app.logging.info(f'[{app.ticker}] No confirmed crypto position is live. Skipping risk-management refresh...')
+                        update_cash_balance_values_for_signals(app)
+                        update_trading_info(app, verbose=False)
+                        return
+                    rm_quantity = abs(live_quantity)
+                    rm_sign = float(np.sign(live_quantity))
+                app.risk_management_position_sign = rm_sign
                 app.force_new_risk_management_prices = True
                 try:
-                    sl_id = send_stop_loss_order(app, _next_order_id(app), abs(target_signed_quantity))
-                    send_take_profit_order(app, _next_bracket_order_id(app, sl_id), abs(target_signed_quantity))
+                    sl_id = send_stop_loss_order(app, _next_order_id(app), rm_quantity)
+                    send_take_profit_order(app, _next_bracket_order_id(app, sl_id), rm_quantity)
                     if _is_crypto_asset(app) and not _crypto_native_stop_supported(app):
                         _start_synthetic_crypto_monitor(app)
                     _refresh_live_state_for_persistence(app, verbose=False)

@@ -7,7 +7,7 @@ name = "ibkr-multi-asset"
 version = "1.0.0"
 description = "Interactive Brokers Multi-Asset Trading Setup - Core Library"
 authors = [
-  { name="Gemini CLI", email="gemini-cli@google.com" }, # Placeholder, adjust as needed
+  { name="José Carlos Gonzáles Tanaka" },
 ]
 requires-python = ">=3.12"
 license = "LicenseRef-QuantInsti-QOL-1.1"
@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups" # Placeholder URL
+"Homepage" = "https://github.com/QuantInsti/QuantInsti-Live-Algo-Trading-Setups/tree/main/ibkr-multi-asset"
 
 [tool.setuptools.packages.find]
 where = ["src"] # Modified to look for packages within the 'src' directory

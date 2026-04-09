@@ -32,7 +32,7 @@ This framework provides a complete algorithmic trading solution for stock market
 
 ```
 ibkr-stock/
-├── src/ibkr-stock/
+├── src/ibkr_stock/
 │   ├── engine.py              # Main trading engine
 │   ├── setup.py               # Core setup class
 │   ├── ib_functions.py        # IB API integration

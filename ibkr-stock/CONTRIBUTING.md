@@ -137,7 +137,7 @@ def calculate_position_size(
 pytest
 
 # Run tests with coverage
-pytest --cov=src/ibkr-stock
+pytest --cov=src/ibkr_stock
 
 # Run specific test file
 pytest tests/test_trading_functions.py

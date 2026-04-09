@@ -299,7 +299,7 @@ def _validate_user_configuration(variables):
     if missing_attrs:
         raise ValueError(f"strategy.py is missing required callables: {', '.join(missing_attrs)}")
 
-    universe_lists = ['fx_pairs', 'futures_symbols', 'metals_symbols', 'crypto_symbols']
+    universe_lists = ['fx_pairs', 'futures_symbols', 'metals_symbols', 'crypto_symbols', 'stock_symbols']
     for name in universe_lists:
         value = variables.get(name, [])
         if value is None:
@@ -336,8 +336,25 @@ def _normalize_symbol_specs(variables):
         specs.append({"symbol": str(metal).upper(), "asset_class": "metals", "exchange": variables.get("metals_exchange", "IDEALPRO"), "currency": variables.get("metals_currency", "USD"), "sec_type": variables.get("metals_sec_type", "CASH"), "contract_month": variables.get("metals_contract_month"), "multiplier": variables.get("metals_multiplier")})
     for crypto in variables.get("crypto_symbols", []):
         specs.append({"symbol": str(crypto).upper(), "asset_class": "crypto", "exchange": variables.get("crypto_exchange", "PAXOS"), "currency": variables.get("crypto_currency", "USD"), "sec_type": "CRYPTO", "contract_month": None, "multiplier": None})
+    stock_primary_exchanges = variables.get("stock_primary_exchanges", {}) or {}
+    stock_quantity_steps = variables.get("stock_quantity_steps", {}) or {}
+    stock_fractional_shares = bool(variables.get("stock_fractional_shares", False))
+    default_stock_step = float(variables.get("stock_default_quantity_step", 0.0001 if stock_fractional_shares else 1.0))
+    for stock in variables.get("stock_symbols", []):
+        symbol = str(stock).upper()
+        specs.append({
+            "symbol": symbol,
+            "asset_class": "stock",
+            "exchange": variables.get("stock_exchange", "SMART"),
+            "currency": variables.get("stock_currency", "USD"),
+            "sec_type": "STK",
+            "primary_exchange": stock_primary_exchanges.get(symbol, variables.get("stock_primary_exchange", "NASDAQ")),
+            "fractional_shares": stock_fractional_shares,
+            "quantity_step": float(stock_quantity_steps.get(symbol, default_stock_step)),
+            "tick_size": float(variables.get("stock_tick_size", 0.01)),
+        })
     if not specs:
-        raise ValueError("No tradable symbols found. Define fx_pairs/futures_symbols/metals_symbols/crypto_symbols in main.py")
+        raise ValueError("No tradable symbols found. Define fx_pairs/futures_symbols/metals_symbols/crypto_symbols/stock_symbols in main.py")
     seen = set()
     dedup = []
     for spec in specs:

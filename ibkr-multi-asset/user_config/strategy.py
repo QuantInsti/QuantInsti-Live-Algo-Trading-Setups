@@ -34,20 +34,39 @@ DEFAULT_ASSET_PARAMS = {
 }
 
 CRYPTO_LONG_ONLY = {"BTC", "ETH", "SOL", "LTC", "BCH"}
+DEFAULT_STOCK_SYMBOLS = {"AAPL", "MSFT", "AMZN"}
+STOCK_MEAN_REVERSION_FREQUENCY = "15min"
 
 _OPTIMIZATION_MANIFEST_PATH = Path("data/models/strategy2_optimization_manifest.json")
 _OPTIMIZATION_FEATURES_PATH = Path("data/models/strategy2_optimal_features_df.xlsx")
 
 
+def _configured_stock_symbols() -> set[str]:
+    try:
+        variables = tf.extract_variables("main.py")
+        configured = variables.get("stock_symbols", []) or []
+        return {str(symbol).upper() for symbol in configured}
+    except Exception:
+        return set(DEFAULT_STOCK_SYMBOLS)
+
+
 def get_asset_runtime_policy(symbol, asset_class=None) -> dict:
     symbol = str(symbol or "").upper()
     asset_class = str(asset_class or "").lower()
+    configured_stocks = _configured_stock_symbols()
     if asset_class == "crypto" or symbol in CRYPTO_LONG_ONLY:
         return {
             "session": "24_7",
             "flatten_at_day_end": False,
             "daily_maintenance_utc_start": "00:00",
             "daily_maintenance_minutes": 15,
+        }
+    if asset_class == "stock" or symbol in configured_stocks or symbol in DEFAULT_STOCK_SYMBOLS:
+        return {
+            "session": "auto",
+            "flatten_at_day_end": False,
+            "daily_maintenance_utc_start": "00:00",
+            "daily_maintenance_minutes": 0,
         }
     return {
         "session": "weekdays",
@@ -58,6 +77,8 @@ def get_asset_runtime_policy(symbol, asset_class=None) -> dict:
 
 
 def get_asset_frequency(symbol) -> str:
+    if str(symbol or "").upper() in (_configured_stock_symbols() or DEFAULT_STOCK_SYMBOLS):
+        return STOCK_MEAN_REVERSION_FREQUENCY
     return "5min"
 
 
@@ -65,7 +86,7 @@ def get_asset_train_span(symbol) -> int:
     return 3500
 
 
-def _symbols_for_kind(kind: str, fx_pairs, futures_symbols, metals_symbols, crypto_symbols) -> list[str]:
+def _symbols_for_kind(kind: str, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols=None) -> list[str]:
     kind = str(kind or "").lower()
     mapping = {
         "fx": fx_pairs or [],
@@ -75,6 +96,10 @@ def _symbols_for_kind(kind: str, fx_pairs, futures_symbols, metals_symbols, cryp
         "xau": metals_symbols or [],
         "metals": metals_symbols or [],
         "crypto": crypto_symbols or [],
+        "stock": stock_symbols or [],
+        "stocks": stock_symbols or [],
+        "equity": stock_symbols or [],
+        "equities": stock_symbols or [],
     }
     return [str(symbol).upper() for symbol in mapping.get(kind, [])]
 
@@ -175,9 +200,13 @@ def _universe(symbol_specs=None) -> list[str]:
 
 def _asset_defaults(symbol: str) -> dict:
     params = dict(DEFAULT_ASSET_PARAMS)
+    configured_stocks = _configured_stock_symbols()
     if symbol in CRYPTO_LONG_ONLY:
         params["allow_short"] = False
         params["target_vol"] = 0.20
+    elif symbol in configured_stocks or symbol in DEFAULT_STOCK_SYMBOLS:
+        params["allow_short"] = False
+        params["target_vol"] = 0.18
     elif symbol == "MES":
         params["target_vol"] = 0.12
     elif symbol == "XAUUSD":
@@ -509,12 +538,13 @@ def _live_target(symbol: str, frame: pd.DataFrame, params: dict, portfolio_weigh
     }
 
 
-def get_signal(app, fx_pairs=None, futures_symbols=None, metals_symbols=None, crypto_symbols=None, leverage=None):
+def get_signal(app, fx_pairs=None, futures_symbols=None, metals_symbols=None, crypto_symbols=None, stock_symbols=None, leverage=None):
     universe = {
-        "fx": _symbols_for_kind("fx", fx_pairs, futures_symbols, metals_symbols, crypto_symbols),
-        "mes": _symbols_for_kind("mes", fx_pairs, futures_symbols, metals_symbols, crypto_symbols),
-        "xau": _symbols_for_kind("xau", fx_pairs, futures_symbols, metals_symbols, crypto_symbols),
-        "crypto": _symbols_for_kind("crypto", fx_pairs, futures_symbols, metals_symbols, crypto_symbols),
+        "fx": _symbols_for_kind("fx", fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols),
+        "mes": _symbols_for_kind("mes", fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols),
+        "xau": _symbols_for_kind("xau", fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols),
+        "crypto": _symbols_for_kind("crypto", fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols),
+        "stocks": _symbols_for_kind("stocks", fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols),
     }
     symbols = [s for group in universe.values() for s in group]
     manifest = _require_optimized_payload(

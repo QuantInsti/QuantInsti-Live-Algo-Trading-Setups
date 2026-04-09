@@ -32,7 +32,7 @@ This framework provides a complete algorithmic trading solution for forex market
 
 ```
 ibkr-forex/
-├── src/ibkr-forex/
+├── src/ibkr_forex/
 │   ├── engine.py              # Main trading engine
 │   ├── setup.py               # Core setup class
 │   ├── ib_functions.py        # IB API integration

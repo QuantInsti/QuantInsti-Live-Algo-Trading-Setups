@@ -111,6 +111,8 @@ def _classify_asset(row):
     sec_type = str(row.get("SecType", "")).upper()
     if sec_type == "FUT" or symbol == "MES":
         return "Futures"
+    if sec_type == "STK":
+        return "Stocks"
     if sec_type == "CRYPTO":
         return "Crypto"
     if symbol == "XAUUSD" or sec_type == "CMDTY":

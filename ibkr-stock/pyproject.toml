@@ -8,7 +8,7 @@
 # - Non-Commercial use only; see the License for permitted use, attribution, and restrictions.
 
 [build-system]
-requires = ["setuptools", "setuptools-scm"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
