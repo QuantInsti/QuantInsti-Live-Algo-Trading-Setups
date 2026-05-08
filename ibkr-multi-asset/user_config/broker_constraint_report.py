@@ -22,12 +22,25 @@ CLIENT_ID = 901
 ACCOUNT = "DU1682711"
 TIMEZONE = "America/Lima"
 
-# Universe to inspect
+# Universe to inspect — all assets from best_best_strategy.py / josgt_strategy_backtesting.py
 ASSETS = [
+    # FX pairs (IDEALPRO)
     {"symbol": "EUR", "secType": "CASH", "exchange": "IDEALPRO", "currency": "USD", "label": "EURUSD"},
+    {"symbol": "GBP", "secType": "CASH", "exchange": "IDEALPRO", "currency": "USD", "label": "GBPUSD"},
+    {"symbol": "AUD", "secType": "CASH", "exchange": "IDEALPRO", "currency": "USD", "label": "AUDUSD"},
+    {"symbol": "USD", "secType": "CASH", "exchange": "IDEALPRO", "currency": "CAD", "label": "USDCAD"},
+    {"symbol": "USD", "secType": "CASH", "exchange": "IDEALPRO", "currency": "CHF", "label": "USDCHF"},
+    {"symbol": "USD", "secType": "CASH", "exchange": "IDEALPRO", "currency": "JPY", "label": "USDJPY"},
+    # Futures
     {"symbol": "MES", "secType": "FUT", "exchange": "CME", "currency": "USD", "multiplier": "5", "label": "MES"},
+    # Spot metals
     {"symbol": "XAUUSD", "secType": "CMDTY", "exchange": "SMART", "currency": "USD", "label": "XAUUSD"},
+    # Crypto (PAXOS)
+    {"symbol": "BTC", "secType": "CRYPTO", "exchange": "PAXOS", "currency": "USD", "label": "BTCUSD"},
     {"symbol": "ETH", "secType": "CRYPTO", "exchange": "PAXOS", "currency": "USD", "label": "ETHUSD"},
+    {"symbol": "SOL", "secType": "CRYPTO", "exchange": "PAXOS", "currency": "USD", "label": "SOLUSD"},
+    {"symbol": "LTC", "secType": "CRYPTO", "exchange": "PAXOS", "currency": "USD", "label": "LTCUSD"},
+    {"symbol": "BCH", "secType": "CRYPTO", "exchange": "PAXOS", "currency": "USD", "label": "BCHUSD"},
 ]
 
 # Optional manual notes that are useful for a backtester but are not exposed cleanly by the IB API.
@@ -186,13 +199,13 @@ class ConstraintProbeApp(EWrapper, EClient):
         self.next_valid_order_id = orderId
         self.connected_event.set()
 
-    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson=""):
+    def error(self, reqId, errorCode, errorString, advancedOrderRejectJson="", *args, **kwargs):
         self.errors.append(
             {
                 "reqId": reqId,
                 "errorCode": errorCode,
                 "errorString": errorString,
-                "advancedOrderRejectJson": advancedOrderRejectJson,
+                "advancedOrderRejectJson": advancedOrderRejectJson if advancedOrderRejectJson else "",
                 "timestamp": dt.datetime.utcnow().isoformat(),
             }
         )
@@ -387,23 +400,51 @@ def _table_page(pdf: PdfPages, title: str, columns: list[str], rows: list[list],
     plt.close(fig)
 
 
+def _chunk_long_line(line: str, max_chars: int = 95) -> list[str]:
+    """Split a long line into sub-lines that each fit on one visual row."""
+    if len(line) <= max_chars:
+        return [line]
+    # Try to break at a comma+space boundary near max_chars
+    chunks = []
+    remaining = line
+    while len(remaining) > max_chars:
+        split_at = remaining.rfind(", ", 0, max_chars)
+        if split_at == -1:
+            split_at = max_chars
+        else:
+            split_at += 1  # include the comma
+        chunks.append(remaining[:split_at].rstrip())
+        remaining = "  " + remaining[split_at:].lstrip()
+    if remaining.strip():
+        chunks.append(remaining)
+    return chunks
+
+
 def _text_page(pdf: PdfPages, title: str, lines: list[str]):
-    fig, ax = plt.subplots(figsize=(8.5, 11))
-    ax.axis("off")
-    ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
-    y = 0.96
+    """Render a text-only page. Long lines chunked; page breaks only between logical lines."""
+    # Pre-flatten: each logical line → one or more display sub-lines
+    flat: list[str] = []
     for line in lines:
-        ax.text(0.03, y, line, ha="left", va="top", fontsize=10, wrap=True)
-        y -= 0.035
-        if y < 0.05:
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
-            fig, ax = plt.subplots(figsize=(8.5, 11))
-            ax.axis("off")
-            ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
-            y = 0.96
-    pdf.savefig(fig, bbox_inches="tight")
-    plt.close(fig)
+        flat.extend(_chunk_long_line(line))
+
+    lines_per_page = 26  # ~0.96 / 0.035 ≈ 27, leave margin
+    total = len(flat)
+    start = 0
+
+    while start < total:
+        fig, ax = plt.subplots(figsize=(8.5, 11))
+        ax.axis("off")
+        ax.set_title(title, fontsize=14, fontweight="bold", pad=12)
+        # If fewer than half a page remains, try to squeeze onto current page
+        remaining = total - start
+        take = remaining if remaining <= int(lines_per_page * 1.15) else lines_per_page
+        y = 0.96
+        for i in range(start, min(start + take, total)):
+            ax.text(0.03, y, flat[i], ha="left", va="top", fontsize=10, wrap=True)
+            y -= 0.035
+        pdf.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+        start += take
 
 
 def _write_pdf_report(payload: dict):

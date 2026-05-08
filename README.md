@@ -29,6 +29,7 @@ The project is organized to separate the core trading engine from user-specific 
 ### Multi-Asset Setup (`ibkr-multi-asset/`)
 -   **`src/ibkr_multi_asset/`**: Core engine, portfolio rebalancing, and PDF reporting logic.
 -   **`user_config/`**: Primary entry point (`main.py`) and strategy implementation.
+-   **`llm-guide.md`**: Paste this file into any LLM (Claude, GPT-4, DeepSeek) to generate a custom trading strategy without writing code — provide your backtest script or describe your strategy in plain language.
 
 ### Forex Setup (`ibkr-forex/`)
 -   **`src/ibkr_forex/`**: Core engine optimized for FX-specific order types and data handling.
