@@ -28,10 +28,12 @@ from ibkr_multi_asset.strategy_runtime import stra
 
 
 # Set the logging level to INFO
+_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "user_config", "data", "log", f"log_file_{dt.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log")
+os.makedirs(os.path.dirname(_log_path), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "user_config", "data", "log", f"log_file_{dt.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.log"),
+    filename=_log_path,
     filemode='w'
 )
 
