@@ -1,4 +1,4 @@
-# LLM Strategy Guide — IBKR Multi-Asset Setup
+# LLM Strategy Guide :  IBKR Multi-Asset Setup
 
 > Copy this entire document and paste it into an LLM (Claude, GPT-4, DeepSeek, etc.).
 > The LLM will generate a complete `my_strategy.py` file for the IBKR multi-asset live trading setup.
@@ -23,7 +23,7 @@ strategy_file = "strategies/my_strategy.py"
 
 ---
 
-## Setup architecture — how the files connect
+## Setup architecture :  how the files connect
 
 ```
 main.py                          strategy.py (your file)
@@ -48,7 +48,7 @@ strategy_file = "strategies/     get_asset_runtime_policy(symbol)
 
 **What you edit:** `main.py` (universe, frequency) and `my_strategy.py` (signals, weights, optimization).
 
-**What you never touch:** `src/` (engine, IB functions, trading functions) — these are the setup's core.
+**What you never touch:** `src/` (engine, IB functions, trading functions) :  these are the setup's core.
 
 **Data flow per bar:**
 1. Engine fetches 5-min OHLC bars from IBKR for each symbol
@@ -136,7 +136,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | Which assets trade whole-units only (no fractional sizing)? | MES, USDJPY, XAUUSD: `quantity_step = 1.0, fractional = False`. EURUSD: `quantity_step = 0.01`. Crypto: `quantity_step = 1e-8` |
 | Which assets are long-only? | Read `long_only_symbols` from `main.py` + `CRYPTO_LONG_ONLY` set |
 | Which assets have no native stop orders (need synthetic monitoring)? | PAXOS crypto (BTC, ETH): engine handles synthetic stops automatically |
-| Are there venue-specific trading hours? (crypto = 24/7, others = weekdays) | `get_asset_runtime_policy` — crypto returns `"24_7"`, others `"weekdays"` |
+| Are there venue-specific trading hours? (crypto = 24/7, others = weekdays) | `get_asset_runtime_policy` :  crypto returns `"24_7"`, others `"weekdays"` |
 | Is there a front-month futures roll? | Engine handles `AUTO_FRONT_MONTH` from `main.py` |
 | What are the IBKR commission/fee structures? | Engine handles fees automatically. Strategy doesn't need to model them |
 
@@ -171,7 +171,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | Is FX data bid/ask or midpoint? | `_normalize_ohlc` computes midpoint from bid/ask if present |
 | What features are computed? (returns, MAs, ATR, volatility, z-scores) | Minimum: `ret`, `fast_ma`, `slow_ma`, `trend_spread`, `atr`, `realized_vol` |
 
-### How the LLM must handle gaps — ASK, don't assume
+### How the LLM must handle gaps :  ASK, don't assume
 
 **Rule: the LLM must never fill a gap silently.** Every function in `my_strategy.py` must contain code that the user explicitly approved or provided. If the user's backtest script or prompt is missing any item below, the LLM must formulate a specific question and wait for the answer before generating that function.
 
@@ -184,9 +184,9 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | `get_asset_train_span` | Training lookback bars | "How many bars of history does your strategy need for training?" |
 | `prepare_base_df` | Feature columns to compute | "What features does your strategy compute? (MAs, ATR, z-scores, volatility, Bollinger bands...)" |
 | `strategy_parameter_optimization` | Parameter grid, scoring metric, validation split, schedule (daily/weekly) | "What parameters do you optimize? What grid? Daily or weekly? What scoring metric?" |
-| `validate_strategy_optimization` | Validation rules (must match the payload saved by optimization) | This is structural — LLM generates it from the payload format. No user input needed |
+| `validate_strategy_optimization` | Validation rules (must match the payload saved by optimization) | This is structural :  LLM generates it from the payload format. No user input needed |
 | `get_signal` | Signal logic per asset, portfolio weights, leverage method | "What is your entry/exit signal? How are portfolio weights computed? How is leverage determined?" |
-| `set_stop_loss_price` | Stop-loss rule (ATR-based, fixed-pip, trailing, or none) | "What is your stop-loss rule? If you don't use stops, say so — the function still returns `np.nan`" |
+| `set_stop_loss_price` | Stop-loss rule (ATR-based, fixed-pip, trailing, or none) | "What is your stop-loss rule? If you don't use stops, say so :  the function still returns `np.nan`" |
 | `set_take_profit_price` | Take-profit rule (ATR-based, risk-reward, or none) | "What is your take-profit rule? If you don't use take-profits, say so" |
 
 **Domain-specific questions the LLM must ask:**
@@ -194,10 +194,10 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | Domain | If user is silent on this, LLM asks |
 |---|---|
 | **Short selling** | "Do you allow short positions? On which assets? (FX: yes, Crypto: typically no)" |
-| **IBKR constraints** | "MES and XAUUSD require whole-unit orders. Your backtest may have used fractional sizing — should I enforce whole units? What about your crypto: long-only?" |
+| **IBKR constraints** | "MES and XAUUSD require whole-unit orders. Your backtest may have used fractional sizing :  should I enforce whole units? What about your crypto: long-only?" |
 | **Risk limits** | "Your backtest may not have daily loss limits or drawdown circuit breakers. Do you want these in the live strategy? If not, I'll note them as not implemented." |
 | **Portfolio allocation** | "How do you allocate capital across assets? Equal-weight, inverse-vol, HRP, or fixed percentages?" |
-| **Leverage** | "What maximum leverage do you use? How is it calculated — fixed multiplier, Kelly criterion, or target volatility?" |
+| **Leverage** | "What maximum leverage do you use? How is it calculated :  fixed multiplier, Kelly criterion, or target volatility?" |
 | **Optimization** | "Does your strategy use fixed parameters or do you re-optimize periodically? If fixed, I'll skip grid search in `strategy_parameter_optimization` and return your fixed values." |
 | **Position sizing** | "Do you cap position size per asset? Is there a maximum allocation per symbol?" |
 | **Regime/volatility** | "Does your strategy reduce exposure in high-volatility regimes? If so, what threshold?" |
@@ -206,10 +206,10 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 
 **If the user says "I don't have that / I don't know":**
 
-- For stops, take-profits, daily loss limits: implement the function returning `np.nan` or `0.0` and add `# NOTE: not implemented — no stop/take-profit/limit rule provided`
-- For signal logic: this is essential. Ask again with more specific prompting ("Even a simple MA crossover is fine — what fast and slow windows?")
+- For stops, take-profits, daily loss limits: implement the function returning `np.nan` or `0.0` and add `# NOTE: not implemented :  no stop/take-profit/limit rule provided`
+- For signal logic: this is essential. Ask again with more specific prompting ("Even a simple MA crossover is fine :  what fast and slow windows?")
 - For portfolio weights: suggest inverse-vol as a simple starting point and ask if they want that
-- For optimization: if they have fixed params, implement `strategy_parameter_optimization` as a pass-through that stores the fixed params — no grid search needed
+- For optimization: if they have fixed params, implement `strategy_parameter_optimization` as a pass-through that stores the fixed params :  no grid search needed
 
 ---
 
@@ -217,15 +217,15 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 
 The setup engine calls these 9 functions. Every one must exist with the exact signature shown below. The engine imports your file as `stra` and calls:
 
-- `stra.get_asset_runtime_policy(symbol, asset_class)` — per-asset session rules
-- `stra.get_asset_frequency(symbol)` — bar frequency string
-- `stra.get_asset_train_span(symbol)` — number of bars for training
-- `stra.prepare_base_df(historical_data, data_frequency, ticker, train_span)` — feature engineering
-- `stra.strategy_parameter_optimization(symbol_specs, ...)` — parameter search, returns config payload
-- `stra.validate_strategy_optimization(symbol_specs, ...)` — validates existing config
-- `stra.get_signal(app, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols, leverage)` — live signals
-- `stra.set_stop_loss_price(app)` — per-bar stop price
-- `stra.set_take_profit_price(app)` — per-bar take-profit price
+- `stra.get_asset_runtime_policy(symbol, asset_class)` :  per-asset session rules
+- `stra.get_asset_frequency(symbol)` :  bar frequency string
+- `stra.get_asset_train_span(symbol)` :  number of bars for training
+- `stra.prepare_base_df(historical_data, data_frequency, ticker, train_span)` :  feature engineering
+- `stra.strategy_parameter_optimization(symbol_specs, ...)` :  parameter search, returns config payload
+- `stra.validate_strategy_optimization(symbol_specs, ...)` :  validates existing config
+- `stra.get_signal(app, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols, leverage)` :  live signals
+- `stra.set_stop_loss_price(app)` :  per-bar stop price
+- `stra.set_take_profit_price(app)` :  per-bar take-profit price
 
 ---
 
@@ -352,12 +352,12 @@ optimization_frequency = "daily"   # re-optimize every trading day
 optimization_frequency = "weekly"  # re-optimize every Monday
 ```
 
-The engine computes an `optimization_bucket` (ISO timestamp at midnight of the current day or Monday of the current week). Each trading period it calls `validate_strategy_optimization()` with this bucket. If the stored manifest has a different bucket (e.g., yesterday vs today), validation fails → the engine calls `strategy_parameter_optimization()` to re-optimize. If the bucket matches, the stored manifest is reused — no re-optimization runs.
+The engine computes an `optimization_bucket` (ISO timestamp at midnight of the current day or Monday of the current week). Each trading period it calls `validate_strategy_optimization()` with this bucket. If the stored manifest has a different bucket (e.g., yesterday vs today), validation fails → the engine calls `strategy_parameter_optimization()` to re-optimize. If the bucket matches, the stored manifest is reused :  no re-optimization runs.
 
 Your strategy file only needs to:
 1. Accept `optimization_frequency` and `optimization_bucket` in both functions
 2. Store both in the payload
-3. Compare them during `validate_strategy_optimization()` — if they don't match, raise `ValueError`
+3. Compare them during `validate_strategy_optimization()` :  if they don't match, raise `ValueError`
 
 The rest is handled by the engine. No scheduling logic needed in your strategy file.
 
@@ -387,7 +387,7 @@ def validate_strategy_optimization(symbol_specs=None, optimization_result=None, 
 
 ---
 
-### 7. `get_signal` — THE MAIN FUNCTION
+### 7. `get_signal` :  THE MAIN FUNCTION
 
 ```python
 def get_signal(app, fx_pairs=None, futures_symbols=None, metals_symbols=None, crypto_symbols=None, stock_symbols=None, leverage=None):
@@ -484,7 +484,7 @@ def _configured_long_only_symbols() -> set[str]:
 
 ---
 
-## Required data functions — FULL IMPLEMENTATIONS
+## Required data functions :  FULL IMPLEMENTATIONS
 
 Include these verbatim. They are boilerplate that every strategy file needs.
 
@@ -633,7 +633,7 @@ def _prepare_symbol_frame(history, symbol, params=None):
 
 ---
 
-## Optimization helpers — FULL IMPLEMENTATIONS
+## Optimization helpers :  FULL IMPLEMENTATIONS
 
 ```python
 def _annualization_factor(freq):
@@ -660,7 +660,7 @@ def _split_train_validation(frame, validation_fraction):
 
 ---
 
-## Payload builder & manifest I/O — FULL IMPLEMENTATIONS
+## Payload builder & manifest I/O :  FULL IMPLEMENTATIONS
 
 ```python
 def _strategy_config_payload(symbol_specs=None, asset_params=None, weights_dict=None,
@@ -700,7 +700,7 @@ def _load_optimized_params():
 
 ---
 
-## Signal computation & live target — FULL IMPLEMENTATION
+## Signal computation & live target :  FULL IMPLEMENTATION
 
 Customize the signal inside `_trend_position_series`. The rest is boilerplate:
 
@@ -749,7 +749,7 @@ def _live_target(symbol, frame, params, portfolio_weight):
 
 ---
 
-## Stop-loss & take-profit — FULL IMPLEMENTATIONS
+## Stop-loss & take-profit :  FULL IMPLEMENTATIONS
 
 ```python
 def set_stop_loss_price(app):
@@ -812,7 +812,7 @@ def _symbols_for_kind(kind, fx_pairs, futures_symbols, metals_symbols, crypto_sy
 
 ---
 
-## Data contract — what columns your strategy receives
+## Data contract :  what columns your strategy receives
 
 The engine always provides `app.historical_data` with these columns, guaranteed:
 
@@ -857,7 +857,7 @@ The `_normalize_ohlc` function above handles the most common column formats. Her
 | **Metals** (XAUUSD) | Spot commodity via SMART exchange | `Open, High, Low, Close` | Standard OHLC format. Quantity step is integer (set in `main.py`: `metals_quantity_step = 1.0`) |
 | **Crypto** | 24/7 trading via PAXOS | `Open, High, Low, Close` | Standard OHLC. Session returned as `"24_7"`. Long-only by default (set in `main.py`: `long_only_symbols = ["ETH", "BTC"]`) |
 
-**Stock adjusted close fix** — add this as the first check in your `_normalize_ohlc`:
+**Stock adjusted close fix** :  add this as the first check in your `_normalize_ohlc`:
 
 ```python
 # Before the existing column detection, add:
@@ -869,11 +869,11 @@ if {"Date", "Adj Close", "Close"}.issubset(title_cols) or \
     out[close_col] = pd.to_numeric(out[adj_col], errors="coerce")
 ```
 
-**IBKR live data**: When trading live, the engine fetches historical bars from IBKR via `reqHistoricalData`. The data arrives with standard column names matching the contract type. Your normalization functions don't need to handle IBKR-specific quirks — they're covered by the existing logic.
+**IBKR live data**: When trading live, the engine fetches historical bars from IBKR via `reqHistoricalData`. The data arrives with standard column names matching the contract type. Your normalization functions don't need to handle IBKR-specific quirks :  they're covered by the existing logic.
 
 ---
 
-## Data auto-population — no manual downloads needed
+## Data auto-population :  no manual downloads needed
 
 The engine fetches and maintains historical data automatically. Here's the lifecycle:
 
@@ -881,20 +881,20 @@ The engine fetches and maintains historical data automatically. Here's the lifec
 |---|---|
 | **First run** | `engine.py` → `_ensure_history_file()` creates a skeleton CSV at `data/historical/historical_MES.csv` with columns `open, high, low, close` and one dummy row |
 | **Every bar** | `engine.py` → `_configure_portfolio_app_for_symbol()` sets `app.historical_data = pd.read_csv(...)` and the engine appends new bars from IBKR's `reqHistoricalData` |
-| **End of cycle** | `sf.save_portfolio_cycle_data()` writes `app.historical_data.to_csv(...)` — data persists across restarts |
+| **End of cycle** | `sf.save_portfolio_cycle_data()` writes `app.historical_data.to_csv(...)` :  data persists across restarts |
 | **Next restart** | `trading_app.__init__()` reads the CSV: `self.historical_data = pd.read_csv(historical_data_address, index_col=0).tail(keep_rows)` |
 
 **What this means for your strategy file:**
 - You never download data. The engine handles IBKR fetching, CSV storage, and bar-by-bar append.
 - Your `_load_symbol_history` function reads from the same CSV path and falls back to `app.historical_data`.
-- On first run, the CSV has only one dummy row. Your `_prepare_symbol_frame` will return empty until enough bars accumulate. This is normal — the engine retries each bar.
+- On first run, the CSV has only one dummy row. Your `_prepare_symbol_frame` will return empty until enough bars accumulate. This is normal :  the engine retries each bar.
 - Keep your `train_span` realistic. A 5-min strategy with `strategy_optimization_lookback = 3000` needs ~10 trading days of data before signals are reliable.
 
 ---
 
 ## Full `main.py` variable reference
 
-Your strategy can read ALL of these via `_main_variables()`. Use only what you need — the required helpers already cover the most common ones.
+Your strategy can read ALL of these via `_main_variables()`. Use only what you need :  the required helpers already cover the most common ones.
 
 | Variable | Type | Default | Used by |
 |---|---|---|---|
@@ -903,11 +903,11 @@ Your strategy can read ALL of these via `_main_variables()`. Use only what you n
 | `metals_symbols` | list | `["XAUUSD"]` | `_symbols_for_kind("metals", ...)` |
 | `crypto_symbols` | list | `["ETH"]` | `_symbols_for_kind("crypto", ...)` |
 | `stock_symbols` | list | `[]` | `_symbols_for_kind("stocks", ...)` |
-| `strategy_frequency` | str | `"5min"` | `_strategy_frequency()` — bar size |
-| `strategy_optimization_lookback` | int | `3000` | `_strategy_train_span()` — training bars |
-| `fixed_max_leverage` | float | `1.0` | `_fixed_max_leverage()` — leverage cap |
-| `long_only_symbols` | list | `["ETH"]` | `_configured_long_only_symbols()` — no-short list |
-| `optimization_frequency` | str | `"daily"` | `_configured_optimization_frequency()` — daily/weekly |
+| `strategy_frequency` | str | `"5min"` | `_strategy_frequency()` :  bar size |
+| `strategy_optimization_lookback` | int | `3000` | `_strategy_train_span()` :  training bars |
+| `fixed_max_leverage` | float | `1.0` | `_fixed_max_leverage()` :  leverage cap |
+| `long_only_symbols` | list | `["ETH"]` | `_configured_long_only_symbols()` :  no-short list |
+| `optimization_frequency` | str | `"daily"` | `_configured_optimization_frequency()` :  daily/weekly |
 | `portfolio_leverage` | float | `1.0` | Fallback leverage (engine uses optimized value from manifest) |
 | `host` | str | `"127.0.0.1"` | IBKR connection (read-only, don't modify) |
 | `port` | int | `7497` | IBKR port |
@@ -926,8 +926,8 @@ Your strategy can read ALL of these via `_main_variables()`. Use only what you n
 
 1. **Do NOT modify engine source files.** Only create/modify files under `user_config/`.
 2. **All 9 functions must exist** with the exact signatures documented above.
-3. **Internal logic is free.** Change signal generation, portfolio weighting, parameter optimization — anything inside the function body. Just keep the signatures.
-4. **Data paths use `Path(__file__).resolve().parents[1]`** — not hardcoded absolute paths.
+3. **Internal logic is free.** Change signal generation, portfolio weighting, parameter optimization :  anything inside the function body. Just keep the signatures.
+4. **Data paths use `Path(__file__).resolve().parents[1]`** :  not hardcoded absolute paths.
 5. **Optimization manifest** must be saved to `data/models/` inside the `user_config` directory.
 6. **Historical data** is loaded from `user_config/data/historical/historical_<SYMBOL>.csv` or received as fallback from the engine via `app.historical_data`.
 7. **The `config_hash`** is computed via `hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()`. The engine compares this to detect stale configs.
@@ -946,13 +946,13 @@ The `_configured_long_only_symbols()` helper reads `long_only_symbols` from `mai
 
 ---
 
-## File structure — your LLM should output
+## File structure :  your LLM should output
 
 A single `my_strategy.py` file containing (in order):
 
 1. Imports (`numpy`, `pandas`, `json`, `hashlib`, `Path`, `trading_functions`)
-2. `DEFAULT_GLOBAL_PARAMS` dict — your strategy's default parameters
-3. `DEFAULT_ASSET_PARAMS` dict — per-asset parameter defaults
+2. `DEFAULT_GLOBAL_PARAMS` dict :  your strategy's default parameters
+3. `DEFAULT_ASSET_PARAMS` dict :  per-asset parameter defaults
 4. `CRYPTO_LONG_ONLY` set
 5. Path constants (`_USER_CONFIG_ROOT`, `_OPTIMIZATION_MANIFEST_PATH`, etc.)
 6. Configuration helpers (`_main_variables`, `_strategy_frequency`, etc.)
@@ -962,10 +962,10 @@ A single `my_strategy.py` file containing (in order):
 10. `prepare_base_df`
 11. Optimization helpers (full code provided above)
 12. Payload builder & manifest I/O (full code provided above)
-13. Signal computation (`_trend_position_series` — YOUR CUSTOM LOGIC HERE)
+13. Signal computation (`_trend_position_series` :  YOUR CUSTOM LOGIC HERE)
 14. `_strategy_returns`, `_live_target` (boilerplate provided above)
-15. Portfolio weighting — YOUR CUSTOM LOGIC (HRP, inverse-vol, equal-weight, etc.)
-16. `_optimize_asset_params` — YOUR CUSTOM grid search
+15. Portfolio weighting :  YOUR CUSTOM LOGIC (HRP, inverse-vol, equal-weight, etc.)
+16. `_optimize_asset_params` :  YOUR CUSTOM grid search
 17. `strategy_parameter_optimization` (skeleton provided in section 5)
 18. `validate_strategy_optimization` (skeleton provided in section 6)
 19. `get_signal` (skeleton provided in section 7)
@@ -990,7 +990,7 @@ The file should be self-contained (no imports from `strategy.py` or other user f
 
 ---
 
-## Risk management — what the engine does vs what you must do
+## Risk management :  what the engine does vs what you must do
 
 The engine provides several risk controls automatically. Your strategy file must supply the signals and targets that feed into them.
 
@@ -1049,7 +1049,7 @@ The `quantity_mode` and `quantity_step` fields are passed to the engine's order 
 
 ---
 
-## Bar cycle — order of operations
+## Bar cycle :  order of operations
 
 Every bar, the engine executes this sequence. Knowing the order matters if your strategy needs data that was set in a previous step.
 
@@ -1070,11 +1070,11 @@ Every bar, the engine executes this sequence. Knowing the order matters if your 
 9. sf.save_portfolio_cycle_data()          ← Persist all data to Excel/CSV/JSON
 ```
 
-**Key insight:** `get_signal` runs ONCE per bar for the full portfolio — not per symbol. Your function must return signals for ALL symbols in one call. `set_stop_loss_price` and `set_take_profit_price` run per symbol during order preparation (step 6).
+**Key insight:** `get_signal` runs ONCE per bar for the full portfolio :  not per symbol. Your function must return signals for ALL symbols in one call. `set_stop_loss_price` and `set_take_profit_price` run per symbol during order preparation (step 6).
 
 ---
 
-## `app` object API — what you can read in your strategy functions
+## `app` object API :  what you can read in your strategy functions
 
 The `app` object is the central state container. These attributes are guaranteed to exist when your functions are called.
 
@@ -1093,7 +1093,7 @@ The `app` object is the central state container. These attributes are guaranteed
 | `app.asset_spec` | dict | Contract metadata: `symbol`, `asset_class`, `exchange`, `currency` |
 | `app.allowed_symbols` | list | Full universe symbol list |
 | `app.strategy_targets` | dict | Per-symbol targets with signal, weight, stop, take-profit. YOU set this in `get_signal` |
-| `app.target_weights` | dict | `{symbol: weight}` — YOU set this in `get_signal` |
+| `app.target_weights` | dict | `{symbol: weight}` :  YOU set this in `get_signal` |
 | `app.pos_df` | DataFrame | Current positions from IBKR (available after step 5) |
 | `app.portfolio_snapshots_df` | DataFrame | Position snapshots with MarketValue, UnrealizedPnL |
 | `app.cash_balance` | DataFrame | Account cash and leverage history |
@@ -1117,7 +1117,7 @@ The `app` object is the central state container. These attributes are guaranteed
 
 ---
 
-## Strategy state persistence — how to remember things across bars
+## Strategy state persistence :  how to remember things across bars
 
 The strategy can persist state across bars, restarts, and crashes via `app.strategy_state`.
 
@@ -1133,7 +1133,7 @@ last_signal = app.strategy_state.get('signals', {}).get('MES', 0)
 ### Writing state (during get_signal)
 
 ```python
-# Set app.strategy_state_updates — the engine persists this automatically
+# Set app.strategy_state_updates :  the engine persists this automatically
 app.strategy_state_updates = {
     'risk': {'daily_pnl': accumulated_pnl, 'peak_equity': current_peak},
     'signals': {'MES': mes_signal, 'EURUSD': eurusd_signal},
@@ -1157,7 +1157,7 @@ app.queue_strategy_state({'execution': {'last_stop_hit': str(now)}})
 |---|---|
 | `app.strategy_state_updates = {...}` in `get_signal` | ✅ Auto-persisted at end of cycle |
 | `app.queue_strategy_state({...})` anywhere | ✅ Persisted at end of cycle |
-| `app.strategy_state['key'] = value` without queue | ❌ Not persisted — must use `queue_strategy_state` |
+| `app.strategy_state['key'] = value` without queue | ❌ Not persisted :  must use `queue_strategy_state` |
 
 ### Use cases for strategy state
 
@@ -1169,7 +1169,7 @@ app.queue_strategy_state({'execution': {'last_stop_hit': str(now)}})
 
 ---
 
-## Troubleshooting — when the generated strategy.py has errors
+## Troubleshooting :  when the generated strategy.py has errors
 
 If the user reports an error after placing `my_strategy.py` and running the setup, the LLM must diagnose systematically. Ask one question at a time, starting from the error message.
 
@@ -1180,13 +1180,13 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 | `ModuleNotFoundError: No module named 'my_strategy'` | File not in `strategies/` folder or `main.py` points to wrong path | "Is `my_strategy.py` in `user_config/strategies/`? Does `main.py` have `strategy_file = 'strategies/my_strategy.py'`?" |
 | `AttributeError: module 'my_strategy' has no attribute 'get_signal'` | Missing function or wrong function name | "Does your file define all 9 required functions? Check for typos in function names." |
 | `TypeError: get_signal() missing X required positional arguments` | Function signature doesn't match | "Compare your `get_signal` signature with the one in the guide. It must accept all parameters even if you don't use them." |
-| `KeyError: 'trend_spread'` or `KeyError: 'close'` | Column not found in DataFrame — missing feature or normalization failed | "What columns does your `_prepare_symbol_frame` produce? Is `_normalize_ohlc` returning the standard `open, high, low, close` columns?" |
+| `KeyError: 'trend_spread'` or `KeyError: 'close'` | Column not found in DataFrame :  missing feature or normalization failed | "What columns does your `_prepare_symbol_frame` produce? Is `_normalize_ohlc` returning the standard `open, high, low, close` columns?" |
 | `ValueError: JosGT manifest incomplete` | Optimization manifest missing per-asset params or weights | "Does your `strategy_parameter_optimization` store params for every symbol in the universe? Check the `asset_params` and weights dicts." |
-| `FileNotFoundError: data/models/strategy_optimization_manifest.json` | First run — manifest doesn't exist yet | "This is normal on first run. The engine will call `strategy_parameter_optimization` to create it. Does that function complete without errors?" |
+| `FileNotFoundError: data/models/strategy_optimization_manifest.json` | First run :  manifest doesn't exist yet | "This is normal on first run. The engine will call `strategy_parameter_optimization` to create it. Does that function complete without errors?" |
 | `ImportError: cannot import name 'linkage' from 'scipy.cluster.hierarchy'` | Missing `scipy` dependency (only needed if using HRP) | "Your strategy uses HRP but `scipy` may not be installed. Run `pip install scipy` or switch to inverse-vol weighting." |
 | Empty signals / no trades | `_prepare_symbol_frame` returns empty DataFrame | "What bar frequency is your strategy using? Does the historical data have enough bars to compute your indicators (e.g., 260-bar slow MA needs 260 bars)?" |
 | `RecursionError` or infinite loop | Optimization grid too large or logic error | "How many parameter combinations does your grid produce? Large grids (e.g., 10×10×10 = 1000 combos × N symbols) may hang. Reduce the grid." |
-| `MemoryError` or `numpy.linalg.LinAlgError` | Covariance matrix singular — not enough data or highly correlated returns | "How many symbols vs how many bars of validation returns? Need more bars than symbols. Try reducing the universe or increasing lookback." |
+| `MemoryError` or `numpy.linalg.LinAlgError` | Covariance matrix singular :  not enough data or highly correlated returns | "How many symbols vs how many bars of validation returns? Need more bars than symbols. Try reducing the universe or increasing lookback." |
 
 ### Debugging workflow the LLM should follow
 
@@ -1198,7 +1198,7 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 
 ---
 
-## When strategy.py is not enough — modifying source code
+## When strategy.py is not enough :  modifying source code
 
 The strategy interface covers signal generation, portfolio weighting, optimization, and risk management. But some customizations require changes to the engine or setup code.
 
@@ -1214,7 +1214,7 @@ The strategy interface covers signal generation, portfolio weighting, optimizati
 | Custom persistence format (e.g., database instead of Excel/JSON) | `setup_functions.py` → `save_portfolio_cycle_data()` |
 | New asset class not covered by `_normalize_symbol_specs` | `engine.py` → `_normalize_symbol_specs()` |
 
-### After modifying source code — rebuild the package
+### After modifying source code :  rebuild the package
 
 Source code changes only take effect after rebuilding. The setup includes platform-specific rebuild scripts:
 

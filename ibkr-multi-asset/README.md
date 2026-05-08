@@ -48,7 +48,7 @@ The strategy interface is generic. Future users can replace the strategy module 
 
 ## Create Your Own Strategy With An LLM
 
-You don't need to write your strategy file from scratch. The included [`llm-guide.md`](llm-guide.md) is a complete prompt — copy its entire contents and paste it into an LLM (Claude, GPT-4, DeepSeek, or any other) along with a description of your strategy. The LLM will generate a fully functional `my_strategy.py` file.
+You don't need to write your strategy file from scratch. The included [`llm-guide.md`](llm-guide.md) is a complete prompt :  copy its entire contents and paste it into an LLM (Claude, GPT-4, DeepSeek, or any other) along with a description of your strategy. The LLM will generate a fully functional `my_strategy.py` file.
 
 **Two ways to use it:**
 
@@ -57,7 +57,7 @@ You don't need to write your strategy file from scratch. The included [`llm-guid
 | **From a backtest** | Your backtesting script + `llm-guide.md` | `my_strategy.py` with your exact signal logic, portfolio construction, and parameters adapted to the live engine |
 | **From scratch** | `llm-guide.md` + plain-language description | `my_strategy.py` with your described strategy (e.g., "Bollinger breakout on 5-min bars, inverse-vol weights, Kelly leverage") |
 
-The LLM guide covers every function the engine requires, full boilerplate implementations of data normalization and optimization helpers, a mandatory question checklist to catch gaps in your strategy, and troubleshooting advice. No source code modifications needed — just drop the generated file into `user_config/strategies/` and point `main.py` to it.
+The LLM guide covers every function the engine requires, full boilerplate implementations of data normalization and optimization helpers, a mandatory question checklist to catch gaps in your strategy, and troubleshooting advice. No source code modifications needed :  just drop the generated file into `user_config/strategies/` and point `main.py` to it.
 
 ```python
 # In main.py:

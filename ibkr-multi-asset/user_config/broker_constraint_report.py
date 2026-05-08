@@ -22,7 +22,7 @@ CLIENT_ID = 901
 ACCOUNT = "DU1682711"
 TIMEZONE = "America/Lima"
 
-# Universe to inspect — all assets from best_best_strategy.py / josgt_strategy_backtesting.py
+# Universe to inspect :  all assets from best_best_strategy.py / josgt_strategy_backtesting.py
 ASSETS = [
     # FX pairs (IDEALPRO)
     {"symbol": "EUR", "secType": "CASH", "exchange": "IDEALPRO", "currency": "USD", "label": "EURUSD"},
