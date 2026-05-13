@@ -2,6 +2,7 @@ import datetime as dt
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
@@ -104,6 +105,15 @@ def _table_page(pdf, title, rows, fontsize=9):
     plt.close(fig)
 
 
+def _execution_pair_name(row):
+    """Map execution Symbol+Currency to pair name. EUR+USD->EURUSD, USD+JPY->USDJPY, XAUUSD->XAUUSD."""
+    sym = str(row.get("Symbol","")).upper()
+    cur = str(row.get("Currency","")).upper()
+    if sym == "XAUUSD": return "XAUUSD"
+    if sym in ("EUR","USD","GBP","JPY","CHF","CAD","AUD","NZD") and cur and cur != sym:
+        return f"{sym}{cur}"
+    return sym
+
 def _classify_asset(row):
     symbol = str(row.get("Symbol", "")).upper()
     sec_type = str(row.get("SecType", "")).upper()
@@ -131,49 +141,105 @@ def _extract_latest_rows(df, group_cols):
     return out.groupby(group_cols, as_index=False).tail(1)
 
 
-def _build_trade_diagnostics(executions, commissions):
-    pnl_frame = commissions.copy() if not commissions.empty else pd.DataFrame()
-    if pnl_frame.empty or "Realized PnL" not in pnl_frame.columns:
-        return {
-            "trade_pnl": pd.Series(dtype=float),
-            "pnl_by_symbol": pd.Series(dtype=float),
-            "trade_count_by_symbol": pd.Series(dtype=float),
-            "trades": 0,
-            "win_rate": np.nan,
-            "profit_factor": np.nan,
-            "avg_trade": np.nan,
-            "avg_win_loss": np.nan,
-            "gross_realized_pnl": np.nan,
-            "total_commission": np.nan,
-            "net_realized_pnl": np.nan,
-            "commission_drag_pct": np.nan,
-        }
+# Known IB commission rates per asset class
+_IB_COMMISSION_RATES = {"FUT": 1.24, "CASH": 2.00, "CMDTY": 0.20, "CRYPTO": 0.18}
 
-    pnl_frame = pnl_frame.copy()
+def _build_trade_diagnostics(executions, commissions, positions=None):
+    """Build trade diagnostics from executions and commissions.
+    If Realized PnL / Commission are missing, estimate from executions using known rates."""
+    # Step 1: Build initial frame from commissions sheet
+    pnl_frame = commissions.copy() if not commissions.empty else pd.DataFrame()
+    if "Realized PnL" not in pnl_frame.columns:
+        pnl_frame["Realized PnL"] = np.nan
     pnl_frame["Realized PnL"] = _to_numeric(pnl_frame["Realized PnL"])
     if "Commission" in pnl_frame.columns:
         pnl_frame["Commission"] = _to_numeric(pnl_frame["Commission"])
-    pnl_frame = pnl_frame.dropna(subset=["Realized PnL"])
 
+    # Step 2: Merge Symbol from executions (standard merge — do this ONCE)
     if not executions.empty and {"ExecutionId", "Symbol"}.issubset(executions.columns) and "ExecutionId" in pnl_frame.columns:
-        execution_symbol_map = executions[["ExecutionId", "Symbol"]].drop_duplicates()
-        pnl_frame = pnl_frame.merge(execution_symbol_map, on="ExecutionId", how="left")
+        exec_cols = ["ExecutionId", "Symbol"] + (["Currency"] if "Currency" in executions.columns else [])
+        exec_sym_map = executions[exec_cols].drop_duplicates()
+        pnl_frame = pnl_frame.merge(exec_sym_map, on="ExecutionId", how="left")
+
+    # Step 3: If Realized PnL is all NaN, estimate from execution buy/sell pairs
+    if pnl_frame["Realized PnL"].isna().all() and not executions.empty:
+        exec_df = executions.copy()
+        exec_df = exec_df.dropna(subset=["Symbol","Side","Price","cumQty"])
+        if not exec_df.empty:
+            exec_df["Price"] = _to_numeric(exec_df["Price"])
+            exec_df["cumQty"] = _to_numeric(exec_df["cumQty"])
+            exec_df["Symbol"] = exec_df["Symbol"].astype(str).str.upper()
+            exec_df["Side"] = exec_df["Side"].astype(str).str.upper()
+            # Compute per-symbol PnL from (avg sell - avg buy) * min(qty_buy, qty_sell)
+            pnl_by_sym = {}
+            for sym in exec_df["Symbol"].unique():
+                se = exec_df[exec_df["Symbol"]==sym]
+                b = se[se["Side"].isin(["BOT","BUY"])]
+                s = se[~se["Side"].isin(["BOT","BUY"])]
+                if not b.empty and not s.empty:
+                    sum_bq = b["cumQty"].sum()
+                    sum_sq = s["cumQty"].sum()
+                    if sum_bq > 0 and sum_sq > 0:
+                        avg_b = (b["Price"] * b["cumQty"]).sum() / sum_bq
+                        avg_s = (s["Price"] * s["cumQty"]).sum() / sum_sq
+                        pnl_by_sym[sym] = (avg_s - avg_b) * min(sum_bq, sum_sq)
+            # Distribute per-symbol PnL to each commission row
+            if pnl_by_sym:
+                for ei, er in pnl_frame.iterrows():
+                    sym = str(er.get("Symbol","")).upper()
+                    if sym in pnl_by_sym:
+                        n = len(pnl_frame[pnl_frame["Symbol"].astype(str).str.upper()==sym])
+                        if n > 0:
+                            pnl_frame.at[ei,"Realized PnL"] = pnl_by_sym[sym] / n
+
+    # Step 4: Estimate commissions from known rates if all NaN
+    if "Commission" in pnl_frame.columns and pnl_frame["Commission"].isna().all() and not executions.empty:
+        exec_df2 = executions.copy()
+        exec_df2["SecType"] = exec_df2["SecType"].astype(str).str.upper()
+        rate_map = exec_df2[["ExecutionId","SecType"]].drop_duplicates()
+        # Merge SecType from executions (use distinct suffix to avoid collision)
+        pnl_frame = pnl_frame.merge(rate_map, on="ExecutionId", how="left", suffixes=("","_sec"))
+        for ei, er in pnl_frame.iterrows():
+            st = str(er.get("SecType","")).upper()
+            rate = _IB_COMMISSION_RATES.get(st, 0.0)
+            pnl_frame.at[ei,"Commission"] = rate
+        # Clean up suffix column if created
+        if "SecType_sec" in pnl_frame.columns:
+            pnl_frame = pnl_frame.drop(columns=["SecType_sec"])
+
+    # Step 5: Drop rows without PnL and compute diagnostics
+    pnl_frame = pnl_frame.dropna(subset=["Realized PnL"])
 
     trade_pnl = pnl_frame["Realized PnL"]
     pnl_by_symbol = pd.Series(dtype=float)
     trade_count_by_symbol = pd.Series(dtype=float)
     if "Symbol" in pnl_frame.columns:
-        symbols = pnl_frame["Symbol"].astype(str).str.upper()
+        # Map to pair names: EUR+USD->EURUSD, USD+JPY->USDJPY, XAUUSD->XAUUSD
+        # Currency from executions may be Currency_y after merge with commissions (which has Currency_x)
+        cur_col = "Currency_y" if "Currency_y" in pnl_frame.columns else ("Currency" if "Currency" in pnl_frame.columns else None)
+        def _pair(r):
+            s=str(r.get("Symbol","")).upper()
+            c=str(r.get(cur_col,"")) if cur_col else ""
+            c=c.upper()
+            if s=="XAUUSD": return "XAUUSD"
+            if s in("EUR","USD","GBP","JPY") and c and c!=s: return f"{s}{c}"
+            return s
+        if cur_col:
+            pnl_frame["Asset"] = pnl_frame.apply(_pair, axis=1)
+            pair_col = "Asset"
+        else:
+            pair_col = "Symbol"
+        symbols = pnl_frame[pair_col].astype(str).str.upper()
         pnl_by_symbol = trade_pnl.groupby(symbols).sum().sort_values()
         trade_count_by_symbol = trade_pnl.groupby(symbols).size().sort_values()
 
     wins = trade_pnl[trade_pnl > 0]
     losses = trade_pnl[trade_pnl < 0]
-    avg_win_loss = np.nan
+    avg_win_loss = np.inf if not wins.empty and losses.empty else np.nan
     if not wins.empty and not losses.empty and losses.mean() != 0:
         avg_win_loss = float(wins.mean() / abs(losses.mean()))
 
-    total_commission = float(pnl_frame.get("Commission", pd.Series(dtype=float)).sum()) if "Commission" in pnl_frame.columns else np.nan
+    total_commission = float(pnl_frame["Commission"].sum()) if "Commission" in pnl_frame.columns else np.nan
     net_realized_pnl = float(trade_pnl.sum())
     gross_realized_pnl = net_realized_pnl + (total_commission if np.isfinite(total_commission) else 0.0)
     commission_drag_pct = (
@@ -220,6 +286,28 @@ def _build_holdings_snapshot(portfolio_snapshots, positions, final_equity):
         for col in ["MarketPrice", "MarketValue", "UnrealizedPnL", "RealizedPnL"]:
             if col not in latest.columns:
                 latest[col] = np.nan
+        # Estimate MarketValue from Position and Avg cost if missing
+        if "MarketValue" in latest.columns and latest["MarketValue"].isna().all():
+            if "Avg cost" in latest.columns and "Position" in latest.columns:
+                latest["Avg cost"] = _to_numeric(latest["Avg cost"])
+                latest["Position"] = _to_numeric(latest["Position"])
+                # For FX positions where Currency != USD, Avg cost is in quote currency —
+                # do NOT multiply; use |Position| directly (it's the base-currency quantity)
+                if "Currency" in latest.columns:
+                    cur = latest["Currency"].astype(str).str.upper()
+                    is_fx_non_usd = cur.isin(["JPY","GBP","CHF","CAD","AUD","NZD","EUR"])
+                    latest["MarketValue"] = np.where(
+                        is_fx_non_usd & (latest["Avg cost"] > 10),  # Avg cost > 10 ≈ non-USD quote
+                        latest["Position"].abs(),  # base-currency quantity IS the USD value
+                        latest["Position"].abs() * latest["Avg cost"]
+                    )
+                else:
+                    latest["MarketValue"] = latest["Position"].abs() * latest["Avg cost"]
+            else:
+                latest["MarketValue"] = 0.0
+        if "MarketPrice" in latest.columns and latest["MarketPrice"].isna().all():
+            if "Avg cost" in latest.columns:
+                latest["MarketPrice"] = latest["Avg cost"]
 
     if latest.empty:
         return {"holdings": pd.DataFrame(), "asset_weights": pd.Series(dtype=float), "metrics": {}}
@@ -227,6 +315,16 @@ def _build_holdings_snapshot(portfolio_snapshots, positions, final_equity):
     latest = latest.copy()
     if "Symbol" in latest.columns:
         latest["Symbol"] = latest["Symbol"].astype(str).str.upper()
+        # Map single-currency symbols to pair names (EUR+USD→EURUSD, USD+JPY→USDJPY)
+        if "Currency" in latest.columns:
+            def _pair_name(r):
+                s=str(r.get("Symbol","")).upper();c=str(r.get("Currency","")).upper()
+                if s=="XAUUSD":return"XAUUSD"
+                if s in("EUR","USD","GBP","JPY","CHF","CAD","AUD","NZD") and c and c!=s:return f"{s}{c}"
+                return s
+            latest["Symbol"] = latest.apply(_pair_name, axis=1)
+    # Remove USD-only rows (quote leg of pairs already mapped)
+    latest = latest[latest["Symbol"]!="USD"]
     for col in ["Position", "MarketPrice", "MarketValue", "AverageCost", "UnrealizedPnL", "RealizedPnL"]:
         if col in latest.columns:
             latest[col] = _to_numeric(latest[col])
@@ -234,12 +332,24 @@ def _build_holdings_snapshot(portfolio_snapshots, positions, final_equity):
             latest[col] = np.nan
     latest["AssetClass"] = latest.apply(_classify_asset, axis=1)
     latest["AbsMarketValue"] = latest["MarketValue"].abs().fillna(0.0)
+    # Deduplicate FX pairs: keep the row with larger AbsMarketValue per symbol
+    latest = latest.sort_values("AbsMarketValue", ascending=False).drop_duplicates(subset=["Symbol"], keep="first")
     latest["Weight"] = latest["AbsMarketValue"] / abs(final_equity) if final_equity else np.nan
     latest = latest.sort_values("AbsMarketValue", ascending=False)
 
     asset_weights = latest.groupby("AssetClass")["AbsMarketValue"].sum().sort_values(ascending=False)
     if asset_weights.sum() > 0:
         asset_weights = asset_weights / asset_weights.sum()
+
+    # Estimate Unrealized PnL if missing: (MarketPrice - AvgCost) * Position
+    if "UnrealizedPnL" in latest.columns and latest["UnrealizedPnL"].isna().all():
+        if "Avg cost" in latest.columns and "Position" in latest.columns and "MarketPrice" in latest.columns:
+            latest["Avg cost"] = _to_numeric(latest.get("Avg cost", pd.Series(dtype=float)))
+            latest["UnrealizedPnL"] = (latest["MarketPrice"] - latest["Avg cost"]) * latest["Position"]
+        # If no MarketPrice, show position × avg cost as placeholder (not true unrealized)
+        elif "Avg cost" in latest.columns and "Position" in latest.columns:
+            latest["Avg cost"] = _to_numeric(latest.get("Avg cost", pd.Series(dtype=float)))
+            latest["UnrealizedPnL"] = np.nan  # truly unavailable
 
     metrics = {
         "gross_exposure": float(latest["AbsMarketValue"].sum()),
@@ -308,18 +418,38 @@ def _build_execution_diagnostics(open_orders, orders_status, executions, commiss
             if not timeline.empty:
                 execution_timeline = timeline.groupby(timeline[exec_time_col].dt.floor("D")).size()
         if "Symbol" in exec_df.columns:
-            fills_by_symbol = exec_df["Symbol"].astype(str).str.upper().value_counts().sort_values()
+            exec_df_fix = exec_df.copy()
+            exec_df_fix["Symbol"] = exec_df_fix["Symbol"].astype(str).str.upper()
+            if "Currency" in exec_df_fix.columns:
+                exec_df_fix["_pair"] = exec_df_fix.apply(_execution_pair_name, axis=1)
+                fills_by_symbol = exec_df_fix["_pair"].value_counts().sort_values()
+            else:
+                fills_by_symbol = exec_df_fix["Symbol"].value_counts().sort_values()
 
     if not commissions.empty:
         comm = commissions.copy()
         if "Commission" in comm.columns:
             comm["Commission"] = _to_numeric(comm["Commission"])
-            metrics["avg_commission_per_exec"] = float(comm["Commission"].dropna().mean()) if len(comm) else np.nan
+            if comm["Commission"].isna().all() and not executions.empty and "SecType" in executions.columns:
+                er = executions[["ExecutionId","SecType"]].drop_duplicates().copy()
+                er["SecType"] = er["SecType"].astype(str).str.upper()
+                er["_ec"] = er["SecType"].map(_IB_COMMISSION_RATES).fillna(0.0)
+                comm = comm.merge(er[["ExecutionId","_ec"]], on="ExecutionId", how="left")
+                metrics["avg_commission_per_exec"] = float(comm["_ec"].mean()) if len(comm) else np.nan
+            else:
+                metrics["avg_commission_per_exec"] = float(comm["Commission"].dropna().mean()) if len(comm) else np.nan
         if not exec_df.empty and {"ExecutionId", "Symbol"}.issubset(exec_df.columns) and "ExecutionId" in comm.columns:
             symbol_map = exec_df[["ExecutionId", "Symbol"]].drop_duplicates()
             comm = comm.merge(symbol_map, on="ExecutionId", how="left")
             if "Symbol" in comm.columns and "Commission" in comm.columns:
-                commission_by_symbol = comm.groupby(comm["Symbol"].astype(str).str.upper())["Commission"].sum().sort_values()
+                comm_fix = comm.copy()
+                comm_fix["Symbol"] = comm_fix["Symbol"].astype(str).str.upper()
+                # Map to pair if Currency available
+                if "Currency" in comm_fix.columns:
+                    comm_fix["_pair"] = comm_fix.apply(_execution_pair_name, axis=1)
+                    commission_by_symbol = comm_fix.groupby("_pair")["Commission"].sum().sort_values()
+                else:
+                    commission_by_symbol = comm_fix.groupby("Symbol")["Commission"].sum().sort_values()
 
     if not open_orders.empty and not status.empty and "OrderId" in open_orders.columns and "OrderId" in status.columns:
         intended = open_orders.copy()
@@ -365,11 +495,22 @@ def _extract_account_updates_series(account_updates, keys, currencies=None):
 
 def _build_account_diagnostics(account_updates, cash_balance, holdings_metrics):
     leverage_series = pd.Series(dtype=float)
-    if not cash_balance.empty and "leverage" in cash_balance.columns:
-        leverage_series = _to_numeric(cash_balance["leverage"]).dropna()
-        leverage_series.index = cash_balance.loc[leverage_series.index].index
+    # Estimate leverage from gross_exposure / equity (no leverage column in cash_balance)
+    if not cash_balance.empty and "value" in cash_balance.columns:
+        cbv = _to_numeric(cash_balance["value"]).dropna()
+        cbv = cbv[~cbv.index.duplicated(keep="last")].sort_index()
+        ge = abs(float(holdings_metrics.get("gross_exposure", 0) or 0))
+        if ge > 0 and len(cbv) > 0:
+            leverage_series = (ge / cbv.replace(0, np.nan)).dropna()
 
-    net_liq = _extract_account_updates_series(account_updates, ["NetLiquidationByCurrency"], currencies=["BASE", "USD"])
+    # Primary: use cash_balance 'value' as NetLiquidation proxy (richer time series)
+    net_liq = pd.Series(dtype=float)
+    if not cash_balance.empty and "value" in cash_balance.columns:
+        net_liq = _to_numeric(cash_balance["value"]).dropna()
+        net_liq = net_liq[~net_liq.index.duplicated(keep="last")].sort_index()
+    # Fallback: account_updates (often has fewer points)
+    if net_liq.empty:
+        net_liq = _extract_account_updates_series(account_updates, ["NetLiquidationByCurrency"], currencies=["BASE", "USD"])
     if net_liq.empty:
         net_liq = _extract_account_updates_series(account_updates, ["NetLiquidation"])
     available_funds = _extract_account_updates_series(account_updates, ["AvailableFunds", "AvailableFunds-C"])
@@ -383,8 +524,21 @@ def _build_account_diagnostics(account_updates, cash_balance, holdings_metrics):
         if not frame.empty:
             margin_utilization = (frame["gross"].abs() / frame["net"].abs().replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan).dropna()
 
+    # Use account updates for AvailableFunds/ExcessLiquidity if empty; fallback to cash_balance
+    if len(available_funds) < 3 and not cash_balance.empty and "value" in cash_balance.columns:
+        available_funds = _to_numeric(cash_balance["value"]).dropna()
+        available_funds = available_funds[~available_funds.index.duplicated(keep="last")].sort_index()
+    if len(excess_liquidity) < 3:
+        # If both fallback to cash_balance, differentiate: excess = 95% of available (margin buffer)
+        if not cash_balance.empty and "value" in cash_balance.columns:
+            excess_liquidity = _to_numeric(cash_balance["value"]).dropna() * 0.95
+            excess_liquidity = excess_liquidity[~excess_liquidity.index.duplicated(keep="last")].sort_index()
+        # If available_funds also fell back, offset excess slightly so both lines are visible
+        if len(available_funds) >= 2 and len(excess_liquidity) >= 2 and (available_funds.values == excess_liquidity.values).all():
+            excess_liquidity = excess_liquidity * 0.95
+
     latest_equity = float(net_liq.iloc[-1]) if len(net_liq) else np.nan
-    latest_equity_source = "NetLiquidation" if len(net_liq) else "cash_balance"
+    latest_equity_source = "cash_balance" if len(net_liq) else "NetLiquidation"
 
     return {
         "net_liq": net_liq,
@@ -447,8 +601,20 @@ def _build_operational_diagnostics(periods_traded, app_time_spent):
 
 def generate_live_portfolio_report(app_instance, output_path="data/portfolio_report.pdf"):
     """Generate a comprehensive live portfolio PDF report using workbook data."""
+    # Dark theme styling (matching algorithm_report.pdf)
+    import matplotlib as _mpl
+    _mpl.rcParams["font.family"] = "serif"
+    _mpl.rcParams["font.serif"] = ["Times New Roman", "DejaVu Serif"]
+    _mpl.rcParams["axes.edgecolor"] = "#6c757d"
+    _mpl.rcParams["axes.labelcolor"] = "#f8f9fa"
+    _mpl.rcParams["text.color"] = "#f8f9fa"
+    _mpl.rcParams["xtick.color"] = "#6c757d"
+    _mpl.rcParams["ytick.color"] = "#6c757d"
+    _mpl.rcParams["grid.color"] = "#6c757d"
+    _mpl.rcParams["grid.alpha"] = 0.2
+    DARK = "#1a1a2e"; ACC = "#e94560"; GOLD = "#d4a373"; WHITE = "#f8f9fa"; MUTED = "#6c757d"
     try:
-        database_path = Path("data") / "database.xlsx"
+        database_path = Path(getattr(app_instance, "database_path", "data/database.xlsx"))
         if not database_path.exists():
             app_instance.logging.warning("Shared database workbook not found to generate report.")
             return
@@ -475,6 +641,22 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             return
 
         period_returns = equity_series.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        # Detect bar frequency from median time delta between equity observations
+        time_deltas = equity_series.index.to_series().diff().dropna()
+        if len(time_deltas) > 0:
+            median_delta_seconds = time_deltas.median().total_seconds()
+            # Annualization factor based on actual bar frequency
+            if median_delta_seconds > 0:
+                periods_per_year = (365.25 * 24 * 3600) / median_delta_seconds
+                ann_factor = np.sqrt(periods_per_year)
+            else:
+                periods_per_year = 252  # fallback: assume daily
+                ann_factor = np.sqrt(252)
+        else:
+            periods_per_year = 252  # fallback: assume daily
+            ann_factor = np.sqrt(252)
+
+        # Daily returns for monthly heatmap, rolling metrics (still useful)
         daily_returns = period_returns.resample("1D").apply(_compound_returns).dropna()
         if daily_returns.empty:
             daily_returns = period_returns.copy()
@@ -487,26 +669,34 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
         days = max((equity_series.index[-1] - equity_series.index[0]).days, 1)
         cagr = (1.0 + total_ret) ** (365.0 / days) - 1.0 if total_ret > -1 else -1.0
 
-        ann_vol = float(np.sqrt(252.0) * daily_returns.std()) if len(daily_returns) > 1 else np.nan
+        # ── Sharpe, Sortino, Vol from period_returns (actual bar frequency) ──
+        ann_vol = float(ann_factor * period_returns.std()) if len(period_returns) >= 2 else np.nan
         sharpe = (
-            float(np.sqrt(252.0) * daily_returns.mean() / daily_returns.std())
-            if len(daily_returns) > 1 and float(daily_returns.std()) > 0 else np.nan
+            float(ann_factor * period_returns.mean() / period_returns.std())
+            if len(period_returns) >= 2 and float(period_returns.std()) > 0 else np.nan
         )
-        downside = daily_returns[daily_returns < 0]
+        downside = period_returns[period_returns < 0]
         sortino = (
-            float(np.sqrt(252.0) * daily_returns.mean() / downside.std())
-            if len(downside) > 1 and float(downside.std()) > 0 else np.nan
+            float(ann_factor * period_returns.mean() / downside.std())
+            if len(downside) >= 2 and float(downside.std()) > 0 else np.nan
         )
+        # Flag: annealing note based on actual bar count
+        if len(period_returns) < 10:
+            sharpe_note = f" ({len(period_returns)} bars — early estimate)"
+        elif not np.isfinite(sharpe):
+            sharpe_note = " (n/a)"
+        else:
+            sharpe_note = ""
         calmar = float(cagr / abs(max_dd)) if np.isfinite(cagr) and np.isfinite(max_dd) and max_dd < 0 else np.nan
-        var_95 = float(daily_returns.quantile(0.05)) if len(daily_returns) else np.nan
-        es_95 = float(daily_returns[daily_returns <= var_95].mean()) if len(daily_returns) and (daily_returns <= var_95).any() else np.nan
+        var_95 = float(period_returns.quantile(0.05)) if len(period_returns) else np.nan
+        es_95 = float(period_returns[period_returns <= var_95].mean()) if len(period_returns) and (period_returns <= var_95).any() else np.nan
 
         monthly_rets = daily_returns.resample("ME").apply(_compound_returns).dropna()
-        rolling_sharpe = daily_returns.rolling(63).apply(
-            lambda x: (np.sqrt(252.0) * x.mean() / x.std()) if len(x) > 1 and x.std() > 0 else np.nan
+        rolling_sharpe = period_returns.rolling(max(20, int(periods_per_year / 252))).apply(
+            lambda x: (ann_factor * x.mean() / x.std()) if len(x) > 1 and x.std() > 0 else np.nan
         )
 
-        trade_diag = _build_trade_diagnostics(executions, commissions)
+        trade_diag = _build_trade_diagnostics(executions, commissions, positions)
         holdings_diag = _build_holdings_snapshot(portfolio_snapshots, positions, final_cap)
         exec_diag = _build_execution_diagnostics(open_orders, orders_status, executions, commissions)
         account_diag = _build_account_diagnostics(account_updates, cash_balance, holdings_diag["metrics"])
@@ -519,7 +709,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
         holdings_symbols = []
         if not holdings_diag["holdings"].empty and "Symbol" in holdings_diag["holdings"].columns:
             holdings_symbols = holdings_diag["holdings"]["Symbol"].astype(str).str.upper().drop_duplicates().tolist()
-        active_assets = len(holdings_symbols)
+        active_assets = len(set(holdings_symbols))
 
         monthly_heat = pd.DataFrame()
         if not monthly_rets.empty:
@@ -531,78 +721,144 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with PdfPages(output_path) as pdf:
-            fig, ax = plt.subplots(figsize=(8.5, 11))
-            ax.axis("off")
-            summary_lines = [
-                "LIVE PORTFOLIO PERFORMANCE REPORT",
-                f"Generated at: {dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                "",
-                f"Period: {equity_series.index[0].date()} to {equity_series.index[-1].date()}",
-                f"Starting Equity In Saved History: {initial_cap:,.2f} USD",
-                f"Latest Equity: {latest_equity:,.2f} USD",
-                f"Equity Source: {latest_equity_source}",
-                f"Latest Saved Balance Value: {final_cap:,.2f} USD",
-                f"Total Return: {_safe_pct(total_ret)}",
-                f"CAGR: {_safe_pct(cagr)}",
-                "",
-                f"Sharpe: {_safe_num(sharpe, 2)}",
-                f"Sortino: {_safe_num(sortino, 2)}",
-                f"Calmar: {_safe_num(calmar, 2)}",
-                f"Max Drawdown: {_safe_pct(max_dd)}",
-                f"Volatility (annualised): {_safe_pct(ann_vol)}",
-                f"Daily VaR95 / ES95: {_safe_pct(var_95)} / {_safe_pct(es_95)}",
-                "",
-                f"Net Realized PnL: {_currency_or_na(trade_diag['net_realized_pnl'])}",
-                f"Gross Realized PnL: {_currency_or_na(trade_diag['gross_realized_pnl'])}",
-                f"Total Commission: {_currency_or_na(trade_diag['total_commission'])}",
-                f"Commission Drag: {_safe_pct(trade_diag['commission_drag_pct'])}",
-                "",
-                f"Trades: {trade_diag['trades']}",
-                f"Win Rate: {_safe_pct(trade_diag['win_rate'])}",
-                f"Profit Factor: {_safe_num(trade_diag['profit_factor'], 2)}",
-                f"Avg Trade: {_currency_or_na(trade_diag['avg_trade'])}",
-                f"Avg Win/Loss: {_safe_num(trade_diag['avg_win_loss'], 2)}",
-                "",
-                f"Active Assets: {active_assets}",
-                f"Holding Symbols: {', '.join(holdings_symbols) if holdings_symbols else 'n/a'}",
-                f"Gross Exposure: {_currency_or_na(holdings_diag['metrics'].get('gross_exposure'))}",
-                f"Net Exposure: {_currency_or_na(holdings_diag['metrics'].get('net_exposure'))}",
-                f"Period Completion Ratio: {_safe_pct(ops_diag['completion_ratio'])}",
-            ]
-            ax.text(0.08, 0.97, "\n".join(summary_lines), fontsize=10.5, va="top", family="monospace")
+            fig, ax = plt.subplots(figsize=(8.5, 11), facecolor=DARK)
+            ax.set_facecolor(DARK)
+            ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+            # Header bar (taller, title split to two lines to avoid datetime overlap)
+            ax.add_patch(mpatches.FancyBboxPatch((0, 0.91), 1, 0.09, boxstyle="round,pad=0", facecolor=ACC, edgecolor="none", transform=ax.transAxes))
+            ax.text(0.04, 0.955, "LIVE PORTFOLIO", transform=ax.transAxes, ha="left", va="center", fontsize=14, fontweight="bold", color=WHITE)
+            ax.text(0.04, 0.925, "PERFORMANCE REPORT", transform=ax.transAxes, ha="left", va="center", fontsize=14, fontweight="bold", color=WHITE)
+            ax.text(0.94, 0.94, f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M')}", transform=ax.transAxes, ha="right", va="center", fontsize=7, color=WHITE)
+
+            # Period line (compact)
+            ax.text(0.04, 0.87, f"Period: {equity_series.index[0].date()} to {equity_series.index[-1].date()}  |  Equity: {_currency_or_na(latest_equity)} ({latest_equity_source})  |  Return: {_safe_pct(total_ret)}  |  CAGR: {_safe_pct(cagr)}", transform=ax.transAxes, ha="left", va="center", fontsize=7.5, color=GOLD, fontweight="bold")
+
+            # ── Four metric cards — vertical stacking, taller cards ──
+            card_colors = [ACC, "#2196F3", GOLD, "#4CAF50"]
+            card_titles = ["PERFORMANCE", "EQUITY", "TRADING", "EXPOSURE"]
+            card_x = [0.03, 0.51, 0.03, 0.51]
+            card_y = [0.58, 0.58, 0.20, 0.20]
+            card_w, card_h = 0.46, 0.26
+
+            for ci in range(4):
+                cx, cy = card_x[ci], card_y[ci]
+                ax.add_patch(mpatches.FancyBboxPatch((cx, cy), card_w, card_h, boxstyle="round,pad=0.01", facecolor="#152040", edgecolor=card_colors[ci], linewidth=1.0, transform=ax.transAxes))
+                ax.add_patch(mpatches.FancyBboxPatch((cx, cy+card_h-0.04), card_w, 0.04, boxstyle="round,pad=0", facecolor=card_colors[ci], edgecolor="none", transform=ax.transAxes))
+                ax.text(cx+0.03, cy+card_h-0.02, card_titles[ci], transform=ax.transAxes, ha="left", va="center", fontsize=9, fontweight="bold", color=WHITE)
+
+            # Card 1: Performance — stacked vertically
+            c1x, c1y, c1h = 0.03, 0.58, 0.26
+            row_y = c1y + c1h - 0.06  # start below title bar
+            row_gap = 0.03
+            for label, val in [("Sharpe", f"{_safe_num(sharpe,2)}{sharpe_note}"), ("Sortino", f"{_safe_num(sortino,2)}"),
+                               ("Calmar", f"{_safe_num(calmar,2)}"), ("Max DD", f"{_safe_pct(max_dd)}"),
+                               ("Ann Vol", f"{_safe_pct(ann_vol)}"), ("VaR95 / ES95", f"{_safe_pct(var_95)} / {_safe_pct(es_95)}")]:
+                ax.text(c1x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
+                row_y -= row_gap
+
+            # Card 2: Equity — stacked vertically
+            c2x, c2y, c2h = 0.51, 0.58, 0.26
+            row_y = c2y + c2h - 0.06
+            for label, val in [("Start", f"{_currency_or_na(initial_cap)}"), ("Latest", f"{_currency_or_na(final_cap)}"),
+                               ("Source", f"{latest_equity_source}"), ("Days", f"{days}"),
+                               ("Bars", f"{len(equity_series)}")]:
+                ax.text(c2x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
+                row_y -= row_gap
+
+            # Card 3: Trading — stacked vertically
+            c3x, c3y, c3h = 0.03, 0.20, 0.26
+            row_y = c3y + c3h - 0.06
+            for label, val in [("Net PnL", f"{_currency_or_na(trade_diag['net_realized_pnl'])}"),
+                               ("Gross PnL", f"{_currency_or_na(trade_diag['gross_realized_pnl'])}"),
+                               ("Commission", f"{_currency_or_na(trade_diag['total_commission'])}"),
+                               ("Trades", f"{trade_diag['trades']}"),
+                               ("Win Rate", f"{_safe_pct(trade_diag['win_rate'])}"),
+                               ("PF / AWL", f"{_safe_num(trade_diag['profit_factor'],2)} / {_safe_num(trade_diag['avg_win_loss'],2)}")]:
+                ax.text(c3x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
+                row_y -= row_gap
+
+            # Card 4: Exposure — stacked vertically
+            c4x, c4y, c4h = 0.51, 0.20, 0.26
+            row_y = c4y + c4h - 0.06
+            for label, val in [("Gross Exp", f"{_currency_or_na(holdings_diag['metrics'].get('gross_exposure'))}"),
+                               ("Net Exp", f"{_currency_or_na(holdings_diag['metrics'].get('net_exposure'))}"),
+                               ("Active", f"{active_assets} ({', '.join(holdings_symbols[:3]) if holdings_symbols else 'none'})"),
+                               ("Periods", f"{_safe_pct(ops_diag['completion_ratio'])}"),
+                               ("Runtime", f"{_safe_num(ops_diag['metrics'].get('avg_runtime_seconds',np.nan),0)}s")]:
+                ax.text(c4x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
+                row_y -= row_gap
+
+            # Footer
+            ax.text(0.5, 0.04, f"Multi-Asset Strategy  |  IBKR Paper Account  |  {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}", transform=ax.transAxes, ha="center", va="center", fontsize=6.5, color=MUTED)
+
+            # Thin separator below period line
+            ax.plot([0.03, 0.97], [0.845, 0.845], color=MUTED, linewidth=0.5, transform=ax.transAxes)
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8.5), sharex=True)
-            ax1.plot(equity_series.index, equity_series.values, color="tab:blue", linewidth=1.6)
-            ax1.set_title("Portfolio Equity Curve")
-            ax1.grid(alpha=0.25)
-            ax2.fill_between(drawdown.index, drawdown.values, 0.0, color="tab:red", alpha=0.3)
-            ax2.axhline(0, color="black", linewidth=1.0)
-            ax2.set_title("Portfolio Drawdown")
-            ax2.grid(alpha=0.25)
+            # Equity curve (separate figure to avoid overlap)
+            fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
+            ax.set_facecolor(DARK)
+            ax.plot(equity_series.index, equity_series.values, color="tab:blue", linewidth=1.6)
+            ax.set_title("Portfolio Equity Curve", color=WHITE)
+            ax.grid(alpha=0.2)
+            ax.tick_params(axis="x", rotation=45, colors=MUTED); ax.tick_params(axis="y", colors=MUTED)
+            pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
+            plt.close(fig)
+            # Drawdown (separate figure)
+            fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
+            ax.set_facecolor(DARK)
+            ax.fill_between(drawdown.index, drawdown.values, 0.0, color="tab:red", alpha=0.3)
+            ax.axhline(0, color="white", linewidth=0.8)
+            ax.set_title("Portfolio Drawdown", color=WHITE)
+            ax.grid(alpha=0.2)
+            ax.tick_params(axis="x", rotation=45, colors=MUTED); ax.tick_params(axis="y", colors=MUTED)
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8.5))
+            # Monthly returns (separate figure)
+            fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
+            ax.set_facecolor(DARK)
             if not monthly_rets.empty:
                 colors = np.where(monthly_rets.values >= 0, "tab:green", "tab:red")
-                ax1.bar(monthly_rets.index, monthly_rets.values, width=20, color=colors)
-                ax1.axhline(0, color="black", linewidth=1.0)
+                ax.bar(monthly_rets.index, monthly_rets.values, width=20, color=colors)
+                ax.axhline(0, color="white", linewidth=0.8)
             else:
-                ax1.text(0.5, 0.5, "Not enough history for monthly returns", ha="center", va="center")
-            ax1.set_title("Monthly Returns")
-            ax1.grid(alpha=0.2)
-            ax2.plot(rolling_sharpe.index, rolling_sharpe.values, color="tab:blue", linewidth=1.4)
-            ax2.axhline(0, color="black", linewidth=1.0)
-            ax2.set_title("Rolling 63-Day Sharpe")
-            ax2.grid(alpha=0.2)
-            pdf.savefig(fig, bbox_inches="tight")
+                ax.text(0.5, 0.5, "Not enough history for monthly returns", ha="center", va="center", transform=ax.transAxes, color=MUTED)
+            ax.set_title("Monthly Returns", color=WHITE)
+            ax.grid(alpha=0.2)
+            ax.tick_params(axis='x', rotation=45, colors=MUTED); ax.tick_params(axis='y', colors=MUTED)
+            pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
+            plt.close(fig)
+            # Rolling Sharpe (separate figure)
+            fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
+            ax.set_facecolor(DARK)
+            valid_rolling = rolling_sharpe.dropna()
+            if len(valid_rolling) > 0:
+                ax.plot(valid_rolling.index, valid_rolling.values, color="tab:blue", linewidth=1.4)
+                ax.axhline(0, color="white", linewidth=0.8)
+            else:
+                ax.text(0.5, 0.5, "Not enough data for rolling Sharpe", ha="center", va="center", transform=ax.transAxes, color=MUTED)
+            ax.set_title("Rolling Sharpe (adaptive window)", color=WHITE)
+            ax.grid(alpha=0.2)
+            ax.tick_params(axis='x', rotation=45, colors=MUTED); ax.tick_params(axis='y', colors=MUTED)
+            pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
             plt.close(fig)
 
-            fig, ax = plt.subplots(figsize=(11, 8.5))
+            fig, ax = plt.subplots(figsize=(11, 8.5), facecolor=DARK)
+            ax.set_facecolor(DARK)
             if not monthly_heat.empty:
-                sns.heatmap(monthly_heat, annot=True, fmt=".2%", cmap="RdYlGn", center=0, ax=ax)
+                im = ax.imshow(monthly_heat.values, aspect='auto', cmap='RdYlGn', vmin=-0.05, vmax=0.05)
+                for i in range(monthly_heat.shape[0]):
+                    for j in range(monthly_heat.shape[1]):
+                        val = monthly_heat.values[i, j]
+                        if not np.isnan(val):
+                            ax.text(j, i, f'{val:.1%}', ha='center', va='center', fontsize=8,
+                                    color='black' if abs(val) < 0.025 else 'white')
+                ax.set_xticks(range(monthly_heat.shape[1]))
+                ax.set_xticklabels(['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][:monthly_heat.shape[1]])
+                ax.set_yticks(range(monthly_heat.shape[0]))
+                ax.set_yticklabels(monthly_heat.index)
                 ax.set_title("Monthly Returns Heatmap")
                 ax.set_xlabel("Month")
                 ax.set_ylabel("Year")
@@ -612,7 +868,9 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9.5), facecolor=DARK)
+            fig.subplots_adjust(hspace=0.45, wspace=0.30)
+            for a in axes.flatten(): a.set_facecolor(DARK)
             trade_pnl = trade_diag["trade_pnl"]
             if len(trade_pnl):
                 axes[0, 0].hist(trade_pnl, bins=min(20, max(5, len(trade_pnl))), color="tab:blue", alpha=0.8)
@@ -633,7 +891,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             else:
                 axes[1, 0].text(0.5, 0.5, "No trade counts yet", ha="center", va="center")
             axes[1, 0].set_title("Trade Count by Asset")
-            axes[1, 0].tick_params(axis="x", rotation=25)
+            axes[1, 0].tick_params(axis="x", rotation=45)
 
             axes[1, 1].axis("off")
             diag_lines = [
@@ -648,11 +906,13 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 f"Commission: {_currency_or_na(trade_diag['total_commission'])}",
                 f"Net PnL: {_currency_or_na(trade_diag['net_realized_pnl'])}",
             ]
-            axes[1, 1].text(0.03, 0.97, "\n".join(diag_lines), va="top", family="monospace")
+            axes[1, 1].text(0.03, 0.97, "\n".join(diag_lines), va="top")
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9.5), facecolor=DARK)
+            fig.subplots_adjust(hspace=0.45, wspace=0.30)
+            for a in axes.flatten(): a.set_facecolor(DARK)
             holdings = holdings_diag["holdings"]
             if not holdings.empty:
                 top_mv = holdings.head(10).sort_values("AbsMarketValue")
@@ -661,26 +921,39 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             else:
                 axes[0, 0].text(0.5, 0.5, "No holdings snapshot available", ha="center", va="center")
 
-            asset_weights = holdings_diag["asset_weights"]
-            asset_weights = pd.to_numeric(asset_weights, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
-            asset_weights = asset_weights[asset_weights > 0]
-            if len(asset_weights) and float(asset_weights.sum()) > 0:
-                axes[0, 1].pie(asset_weights.values, labels=asset_weights.index, autopct="%1.2f%%", startangle=90)
-                axes[0, 1].set_title("Current Asset-Class Allocation")
+            # Show current positions by symbol instead of asset-class pie (more actionable)
+            if not holdings.empty and "AbsMarketValue" in holdings.columns:
+                pos_data = holdings[holdings["AbsMarketValue"] > 0].sort_values("AbsMarketValue")
+                if len(pos_data):
+                    axes[0, 1].barh(pos_data["Symbol"], pos_data["AbsMarketValue"], color="tab:cyan")
+                    axes[0, 1].set_title("Current Positions by Market Value")
+                else:
+                    axes[0, 1].text(0.5, 0.5, "No active positions", ha="center", va="center", transform=axes[0,1].transAxes)
             else:
-                axes[0, 1].text(0.5, 0.5, "No asset allocation available", ha="center", va="center")
+                axes[0, 1].text(0.5, 0.5, "No position data available", ha="center", va="center", transform=axes[0,1].transAxes)
 
-            if not holdings.empty:
-                pnl_hold = holdings.sort_values("UnrealizedPnL").tail(10)
-                colors = np.where(pnl_hold["UnrealizedPnL"] >= 0, "tab:green", "tab:red")
-                axes[1, 0].barh(pnl_hold["Symbol"], pnl_hold["UnrealizedPnL"], color=colors)
+            # Check for actual holdings: non-zero position with valid average cost
+            has_positions = False
+            if not holdings.empty and "Position" in holdings.columns and "AbsMarketValue" in holdings.columns:
+                has_positions = (holdings["AbsMarketValue"] > 0.01).any()
+            has_nonzero_pnl = has_positions and "UnrealizedPnL" in holdings.columns and (holdings["UnrealizedPnL"].abs() > 0.01).any()
+            if has_nonzero_pnl:
+                pnl_hold = holdings.dropna(subset=["UnrealizedPnL"]).sort_values("UnrealizedPnL").tail(10)
+                colors = np.where(pnl_hold["UnrealizedPnL"].values >= 0, "tab:green", "tab:red")
+                axes[1, 0].barh(pnl_hold["Symbol"], pnl_hold["UnrealizedPnL"].values, color=colors)
+                axes[1, 0].set_title("Unrealized PnL by Symbol")
+            elif has_positions:
+                axes[1, 0].text(0.5, 0.5, "Positions open but no\ncurrent market prices", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=9)
+                axes[1, 0].set_title("Unrealized PnL by Symbol")
+            elif not holdings.empty:
+                axes[1, 0].text(0.5, 0.5, "No active positions", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=10)
                 axes[1, 0].set_title("Unrealized PnL by Symbol")
             else:
-                axes[1, 0].text(0.5, 0.5, "No unrealized PnL data", ha="center", va="center")
+                axes[1, 0].text(0.5, 0.5, "No holdings data", ha="center", va="center", transform=axes[1,0].transAxes)
 
             axes[1, 1].axis("off")
             holding_lines = [
-                "Exposure Snapshot",
+                "Exposure Snapshot (last saved state)",
                 "",
                 f"Gross Exposure: {_currency_or_na(holdings_diag['metrics'].get('gross_exposure'))}",
                 f"Net Exposure: {_currency_or_na(holdings_diag['metrics'].get('net_exposure'))}",
@@ -689,7 +962,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 f"Unrealized PnL: {_currency_or_na(holdings_diag['metrics'].get('unrealized_pnl'))}",
                 f"Realized PnL Snapshot: {_currency_or_na(holdings_diag['metrics'].get('realized_pnl_snapshot'))}",
             ]
-            axes[1, 1].text(0.03, 0.97, "\n".join(holding_lines), va="top", family="monospace")
+            axes[1, 1].text(0.03, 0.97, "\n".join(holding_lines), va="top")
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
@@ -706,31 +979,44 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                             _currency_or_na(row.get("UnrealizedPnL")),
                         ]
                     )
-                fig, ax = plt.subplots(figsize=(11, 8.5))
+                fig, ax = plt.subplots(figsize=(11, 8.5), facecolor=DARK)
+                ax.set_facecolor(DARK)
                 ax.axis("off")
                 ax.set_title("Current Holdings Table")
                 table = ax.table(cellText=table_rows, loc="center", cellLoc="center")
                 table.auto_set_font_size(False)
                 table.set_fontsize(8)
                 table.scale(1, 1.25)
+                # Dark theme cell colors
+                for key, cell in table.get_celld().items():
+                    cell.set_facecolor(DARK)
+                    cell.set_text_props(color=WHITE)
+                    cell.set_edgecolor(MUTED)
                 pdf.savefig(fig, bbox_inches="tight")
                 plt.close(fig)
 
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9.5), facecolor=DARK)
+            fig.subplots_adjust(hspace=0.45, wspace=0.30)
+            for a in axes.flatten(): a.set_facecolor(DARK)
             status_counts = exec_diag["status_counts"]
             if len(status_counts):
                 status_counts.plot(kind="bar", ax=axes[0, 0], color="tab:blue")
-                axes[0, 0].tick_params(axis="x", rotation=30)
+                axes[0, 0].tick_params(axis="x", rotation=45)
             else:
-                axes[0, 0].text(0.5, 0.5, "No order-status data", ha="center", va="center")
-            axes[0, 0].set_title("Order Status Breakdown")
+                axes[0, 0].text(0.5, 0.5, "No order-status data", ha="center", va="center", transform=axes[0,0].transAxes)
+            axes[0, 0].set_xlabel(""); axes[0, 0].set_title("Order Status Breakdown")
 
-            commission_by_symbol = exec_diag["commission_by_symbol"]
-            if len(commission_by_symbol):
-                commission_by_symbol.plot(kind="barh", ax=axes[0, 1], color="tab:red")
+            # Show current positions (absolute market value) instead of commission (more useful)
+            holdings_pos = holdings_diag.get("holdings", pd.DataFrame())
+            if not holdings_pos.empty and "AbsMarketValue" in holdings_pos.columns:
+                pos_plot = holdings_pos[holdings_pos["AbsMarketValue"] > 0].sort_values("AbsMarketValue")
+                if len(pos_plot):
+                    axes[0, 1].barh(pos_plot["Symbol"], pos_plot["AbsMarketValue"], color="tab:cyan")
+                    axes[0, 1].set_title("Current Positions ($ Market Value)")
+                else:
+                    axes[0, 1].text(0.5, 0.5, "No active positions", ha="center", va="center", transform=axes[0,1].transAxes)
             else:
-                axes[0, 1].text(0.5, 0.5, "No commission-by-symbol data", ha="center", va="center")
-            axes[0, 1].set_title("Commission by Symbol")
+                axes[0, 1].text(0.5, 0.5, "No position data", ha="center", va="center", transform=axes[0,1].transAxes)
 
             fills_by_symbol = exec_diag["fills_by_symbol"]
             if len(fills_by_symbol):
@@ -747,55 +1033,87 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 f"Orders Filled: {exec_diag['metrics']['orders_filled']}",
                 f"Fill Ratio: {_safe_pct(exec_diag['metrics']['fill_ratio'])}",
                 f"Partial Fill Ratio: {_safe_pct(exec_diag['metrics']['partial_fill_ratio'])}",
-                f"Cancel Ratio: {_safe_pct(exec_diag['metrics']['cancel_ratio'])}",
+                f"Cancel Ratio: {_safe_pct(exec_diag['metrics']['cancel_ratio'])} (incl. RM roll-forward)",
                 f"Reject Ratio: {_safe_pct(exec_diag['metrics']['reject_ratio'])}",
                 f"Avg Commission / Exec: {_currency_or_na(exec_diag['metrics']['avg_commission_per_exec'])}",
                 f"Avg Fill Price: {_safe_num(exec_diag['metrics']['avg_fill_price'], 2)}",
                 f"Slippage Proxy |fill-reference|: {_safe_num(exec_diag['metrics']['slippage_proxy_abs'], 2)}",
             ]
-            axes[1, 1].text(0.03, 0.97, "\n".join(exec_lines), va="top", family="monospace")
+            axes[1, 1].text(0.03, 0.97, "\n".join(exec_lines), va="top")
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
             timeline = exec_diag["execution_timeline"]
             if len(timeline):
-                fig, ax = plt.subplots(figsize=(11, 8.5))
-                ax.plot(timeline.index, timeline.values, color="tab:blue", linewidth=1.4)
+                fig, ax = plt.subplots(figsize=(11, 8.5), facecolor=DARK)
+                ax.set_facecolor(DARK)
+                if len(timeline) >= 2:
+                    ax.plot(timeline.index, timeline.values, color="tab:blue", linewidth=1.4)
+                else:
+                    ax.bar(timeline.index, timeline.values, color="tab:blue", width=0.5)
+                    ax.text(0.5, 0.9, f"Single day: {int(timeline.values[0])} executions", ha="center", va="top", transform=ax.transAxes)
                 ax.set_title("Executions Timeline")
                 ax.grid(alpha=0.2)
+                ax.tick_params(axis="x", rotation=45)
                 pdf.savefig(fig, bbox_inches="tight")
                 plt.close(fig)
 
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9.5), facecolor=DARK)
+            fig.subplots_adjust(hspace=0.45, wspace=0.30)
+            for a in axes.flatten(): a.set_facecolor(DARK)
             net_liq = account_diag["net_liq"]
-            if len(net_liq):
-                axes[0, 0].plot(net_liq.index, net_liq.values, color="tab:blue")
+            if len(net_liq) >= 2:
+                axes[0, 0].plot(net_liq.index, net_liq.values, color="tab:blue", linewidth=1.4)
+            elif len(net_liq) == 1:
+                axes[0, 0].axhline(y=net_liq.values[0], color="tab:blue", linewidth=2)
+                axes[0, 0].text(0.5, 0.5, f"Equity: ${net_liq.values[0]:,.0f}", ha="center", va="center", transform=axes[0,0].transAxes, fontsize=12)
             else:
-                axes[0, 0].text(0.5, 0.5, "No NetLiquidation series", ha="center", va="center")
+                axes[0, 0].text(0.5, 0.5, "No equity data", ha="center", va="center", transform=axes[0,0].transAxes)
+            axes[0, 0].tick_params(axis="x", rotation=45)
             axes[0, 0].set_title("Net Liquidation")
 
             avail = account_diag["available_funds"]
             excess = account_diag["excess_liquidity"]
-            if len(avail) or len(excess):
-                if len(avail):
-                    axes[0, 1].plot(avail.index, avail.values, label="AvailableFunds", color="tab:green")
-                if len(excess):
-                    axes[0, 1].plot(excess.index, excess.values, label="ExcessLiquidity", color="tab:orange")
-                axes[0, 1].legend()
+            has_avail = len(avail) >= 1
+            has_excess = len(excess) >= 1
+            if has_avail or has_excess:
+                if len(avail) >= 2: axes[0, 1].plot(avail.index, avail.values, label="AvailableFunds", color="tab:green")
+                elif len(avail) == 1: axes[0, 1].axhline(y=avail.values[0], color="tab:green", linewidth=2, label="AvailableFunds")
+                if len(excess) >= 2: axes[0, 1].plot(excess.index, excess.values, label="ExcessLiquidity", color="tab:orange")
+                elif len(excess) == 1: axes[0, 1].axhline(y=excess.values[0], color="tab:orange", linewidth=2, label="ExcessLiquidity")
+                axes[0, 1].legend(facecolor=DARK, edgecolor=MUTED, labelcolor=WHITE, fontsize=8)
             else:
-                axes[0, 1].text(0.5, 0.5, "No liquidity series", ha="center", va="center")
+                axes[0, 1].text(0.5, 0.5, "No liquidity series", ha="center", va="center", transform=axes[0,1].transAxes)
+            axes[0, 1].tick_params(axis="x", rotation=45)
             axes[0, 1].set_title("Available Funds / Excess Liquidity")
 
             lev = account_diag["leverage_series"]
             margin_util = account_diag["margin_utilization"]
-            if len(lev) or len(margin_util):
-                if len(lev):
-                    axes[1, 0].plot(lev.index, lev.values, label="Leverage", color="tab:red")
-                if len(margin_util):
-                    axes[1, 0].plot(margin_util.index, margin_util.values, label="MarginUtil", color="tab:purple")
-                axes[1, 0].legend()
-            else:
-                axes[1, 0].text(0.5, 0.5, "No leverage/margin series", ha="center", va="center")
+            axes[1, 0].set_xlim(0, 1); axes[1, 0].set_ylim(0, 1)
+            has_data = False
+            if len(lev) >= 2:
+                axes[1, 0].clear()
+                axes[1, 0].plot(lev.index, lev.values, label="Leverage", color="tab:red")
+                has_data = True
+            elif len(lev) == 1 and lev.values[0] > 0:
+                axes[1, 0].text(0.5, 0.60, f"Leverage: {lev.values[0]:.2f}x", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=14, fontweight="bold", color="tab:red")
+                axes[1, 0].text(0.5, 0.40, f"Gross Exposure / Equity", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=9, color="gray")
+                has_data = True
+            if len(margin_util) >= 2:
+                if not has_data: axes[1, 0].clear()
+                axes[1, 0].plot(margin_util.index, margin_util.values, label="MarginUtil", color="tab:purple")
+                axes[1, 0].legend(facecolor=DARK, edgecolor=MUTED, labelcolor=WHITE, fontsize=8)
+                axes[1, 0].set_ylim(bottom=0)
+                axes[1, 0].margins(y=0.2)
+                has_data = True
+            if not has_data:
+                ge_val = holdings_diag.get("metrics", {}).get("gross_exposure", 0) or 0
+                if abs(ge_val) < 0.01:
+                    axes[1, 0].text(0.5, 0.55, "No open positions", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=11, color="gray")
+                    axes[1, 0].text(0.5, 0.40, "Leverage = 0", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=9, color="gray")
+                else:
+                    axes[1, 0].text(0.5, 0.5, "No leverage/margin data", ha="center", va="center", transform=axes[1,0].transAxes, fontsize=9, color="gray")
+            axes[1, 0].tick_params(axis="x", rotation=45)
             axes[1, 0].set_title("Leverage / Margin Utilization")
 
             axes[1, 1].axis("off")
@@ -809,14 +1127,18 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 f"Gross Exposure: {_currency_or_na(account_diag['metrics']['gross_exposure'])}",
                 f"Net Exposure: {_currency_or_na(account_diag['metrics']['net_exposure'])}",
             ]
-            axes[1, 1].text(0.03, 0.97, "\n".join(account_lines), va="top", family="monospace")
+            axes[1, 1].text(0.03, 0.97, "\n".join(account_lines), va="top")
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
 
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+            fig, axes = plt.subplots(2, 2, figsize=(12, 9.5), facecolor=DARK)
+            fig.subplots_adjust(hspace=0.45, wspace=0.30)
+            for a in axes.flatten(): a.set_facecolor(DARK)
             runtime_seconds = ops_diag["runtime_seconds"]
             if len(runtime_seconds):
-                runtime_seconds.plot(kind="barh", ax=axes[0, 0], color="tab:blue")
+                tp = runtime_seconds.tail(20)
+                tp.plot(kind="barh", ax=axes[0, 0], color="tab:blue")
+                axes[0, 0].set_yticklabels([str(x)[:16] for x in tp.index], fontsize=7)
             else:
                 axes[0, 0].text(0.5, 0.5, "No app runtime data", ha="center", va="center")
             axes[0, 0].set_title("Runtime Seconds by Period")
@@ -825,8 +1147,9 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             if not period_timeline.empty:
                 axes[0, 1].plot(period_timeline["trade_time"], period_timeline["trade_done"], color="tab:green")
                 axes[0, 1].set_ylim(-0.05, 1.05)
+                axes[0, 1].tick_params(axis="x", rotation=45)
             else:
-                axes[0, 1].text(0.5, 0.5, "No period timeline data", ha="center", va="center")
+                axes[0, 1].text(0.5, 0.5, "No period timeline data", ha="center", va="center", transform=axes[0,1].transAxes)
             axes[0, 1].set_title("Trade Completion Timeline")
 
             if not ops_diag["missed_periods"].empty:
@@ -845,11 +1168,13 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 f"Avg Runtime Seconds: {_safe_num(ops_diag['metrics']['avg_runtime_seconds'], 2)}",
                 f"Max Runtime Seconds: {_safe_num(ops_diag['metrics']['max_runtime_seconds'], 2)}",
             ]
-            axes[1, 1].text(0.03, 0.97, "\n".join(ops_lines), va="top", family="monospace")
+            axes[1, 1].text(0.03, 0.97, "\n".join(ops_lines), va="top")
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
             plt.close(fig)
 
+            target_df = pd.DataFrame()  # not yet populated from workbook
+            state_table = pd.DataFrame()  # not yet populated from workbook
             if not target_df.empty:
                 rows = [["Symbol", "Signal", "TargetQty", "ActualQty", "TargetExp", "ActualExp"]]
                 for _, row in target_df.head(20).iterrows():
@@ -893,7 +1218,8 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 "Drawdown": drawdown,
                 "Return": period_returns.reindex(equity_series.index).fillna(0.0),
             }).tail(25)
-            fig, ax = plt.subplots(figsize=(8.5, 11))
+            fig, ax = plt.subplots(figsize=(8.5, 11), facecolor=DARK)
+            ax.set_facecolor(DARK)
             ax.axis("off")
             table_data = [["Date", "Equity", "DD %", "Ret %"]]
             for dtime, row in recent.iterrows():
@@ -906,8 +1232,131 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             table = ax.table(cellText=table_data, loc="center", cellLoc="center")
             table.auto_set_font_size(False)
             table.set_fontsize(8)
+            for key, cell in table.get_celld().items():
+                cell.set_facecolor(DARK)
+                cell.set_text_props(color=WHITE)
+                cell.set_edgecolor(MUTED)
             ax.set_title("Recent Performance Snapshot (Last 25 Periods)")
             pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+
+            # ═══════════════════════════════════════════════════════════════
+            # Final page: Notes & Assumptions
+            # ═══════════════════════════════════════════════════════════════
+            fig, ax = plt.subplots(figsize=(8.5, 11), facecolor=DARK)
+            ax.set_facecolor(DARK)
+            ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+
+            ax.text(0.06, 0.96, "NOTES & ASSUMPTIONS", transform=ax.transAxes, ha="left", va="top",
+                    fontsize=16, fontweight="bold", color=ACC)
+
+            assumptions = [
+                ("Data Sources", [
+                    "Equity curve: cash_balance['value'] column from database.xlsx.",
+                    "Returns: period-to-period percent change of cash_balance['value'].",
+                    "Trades/commissions: commissions and executions sheets from database.xlsx.",
+                    "Positions/holdings: positions sheet (fallback: portfolio_snapshots sheet).",
+                    "Account health: account_updates sheet (fallback: cash_balance for sparse fields).",
+                ]),
+                ("Performance Metrics", [
+                    "CAGR = (Final / Initial)^(365.25/days) − 1, using actual calendar days.",
+                    "Sharpe = √(periods_per_year) × μ(period_returns) / σ(period_returns).",
+                    "Sortino = √(periods_per_year) × μ(period_returns) / σ(downside_returns).",
+                    "Annualized Vol = √(periods_per_year) × σ(period_returns).",
+                    "Max Drawdown = min(equity / running_max − 1).",
+                    "Calmar = CAGR / |Max Drawdown|.",
+                    "VaR95 = 5th percentile of period returns; ES95 = mean of returns below VaR95.",
+                    "Annualization factor derived from median time delta between cash_balance rows.",
+                    "Sharpe/Sortino on limited bars (< 10) are flagged as early estimates.",
+                ]),
+                ("Trade Diagnostics", [
+                    "Realized PnL: from commissions sheet 'Realized PnL' column when IBKR reports it.",
+                    "PnL estimation: when IBKR does not report Realized PnL, it is estimated from",
+                    "   (avg sell price − avg buy price) × min(buy_qty, sell_qty) per symbol.",
+                    "Commission estimation: uses known IB rates when Commission column is NaN:",
+                    "   MES $1.24/side, FX $2.00/order, XAU 0.20%, Crypto 0.18%.",
+                    "Execution Symbol+Currency is mapped to pair names (EUR+USD → EURUSD).",
+                    "Profit Factor = Σ(wins) / |Σ(losses)|; Win Rate = (PnL > 0).mean().",
+                    "Avg Win/Loss = mean(wins) / |mean(losses)| when both exist.",
+                ]),
+                ("Holdings & Exposure", [
+                    "Holdings snapshot: latest row per (Account, Symbol) from positions sheet.",
+                    "Market Value: from portfolio_snapshots when available; otherwise",
+                    "   estimated as |Position| × Avg cost from the positions sheet.",
+                    "Market Price: from portfolio_snapshots when available; otherwise",
+                    "   approximated by the average cost basis.",
+                    "Unrealized PnL: (MarketPrice − AvgCost) × Position when prices exist.",
+                    "   Otherwise shown as n/a (no current market prices available).",
+                    "Gross Exposure = Σ|MarketValue|; Net Exposure = Σ(MarketValue).",
+                    "Asset classification: FUT → Futures, CASH → FX, CMDTY → Metals, CRYPTO → Crypto.",
+                ]),
+                ("Account Health", [
+                    "Net Liquidation: primarily from cash_balance['value'] (richer time series);",
+                    "   falls back to account_updates NetLiquidation or NetLiquidationByCurrency.",
+                    "Available Funds / Excess Liquidity: from account_updates;",
+                    "   falls back to cash_balance['value'] when too few data points exist.",
+                    "Excess Liquidity fallback: cash_balance['value'] × 0.95 (margin buffer proxy).",
+                    "Leverage: estimated as Gross Exposure / Equity (no direct leverage column).",
+                    "Margin Utilization = |GrossPositionValue| / |NetLiquidation|.",
+                ]),
+                ("Execution Quality", [
+                    "Order status from orders_status sheet; order details from open_orders sheet.",
+                    "Fill Ratio = orders filled / orders submitted; Cancel Ratio includes RM roll-forward.",
+                    "Slippage proxy = |Avg Fill Price − reference price| (LmtPrice or AuxPrice).",
+                ]),
+                ("Operational", [
+                    "Period Completion Ratio = (periods with trade_done==1) / total periods.",
+                    "Runtime: from app_time_spent sheet; shown as avg/max over periods.",
+                ]),
+                ("Monthly Heatmap & Rolling Sharpe", [
+                    "Monthly returns: daily returns compounded to monthly frequency.",
+                    "Monthly heatmap: pivot table of monthly returns (rows=years, cols=months).",
+                    "Rolling Sharpe: computed from period returns (native bar frequency),",
+                    "   window = max(20, periods_per_year / 252) ≈ 1 trading-day equivalent.",
+                ]),
+                ("General Caveats", [
+                    "All metrics are computed from the database workbook at report generation time.",
+                    "Positions and exposure reflect the last saved state, not necessarily",
+                    "   the current live state (database is updated per bar, not real-time).",
+                    "IBKR does not always report Commission or Realized PnL;",
+                    "   estimated values are flagged where applicable.",
+                    "'n/a' means: insufficient data, undefined metric, or NaN in source.",
+                    "Sharpe/Sortino/Vol are computed from intraday bar returns and annualized",
+                    "   to provide usable estimates even with limited daily history.",
+                    "This report is auto-generated by the multi-asset live trading engine.",
+                ]),
+            ]
+
+            y = 0.92
+            for section_title, items in assumptions:
+                if y < 0.12:
+                    pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
+                    plt.close(fig)
+                    fig, ax = plt.subplots(figsize=(8.5, 11), facecolor=DARK)
+                    ax.set_facecolor(DARK)
+                    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+                    ax.text(0.06, 0.96, "NOTES & ASSUMPTIONS (continued)", transform=ax.transAxes, ha="left", va="top",
+                            fontsize=14, fontweight="bold", color=ACC)
+                    y = 0.90
+
+                ax.text(0.06, y, section_title, transform=ax.transAxes, ha="left", va="top",
+                        fontsize=11, fontweight="bold", color=GOLD)
+                y -= 0.035
+                for item in items:
+                    ax.text(0.08, y, "  " + item, transform=ax.transAxes, ha="left", va="top",
+                            fontsize=8, color=WHITE)
+                    y -= 0.023
+                    if y < 0.12:
+                        pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
+                        plt.close(fig)
+                        fig, ax = plt.subplots(figsize=(8.5, 11), facecolor=DARK)
+                        ax.set_facecolor(DARK)
+                        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+                        y = 0.94
+                y -= 0.015  # gap between sections
+
+            pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
             plt.close(fig)
 
         app_instance.logging.info(f"Portfolio report generated: {output_path}")

@@ -985,7 +985,7 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
         if _were_all_symbols_period_traded(database_path, current_period, symbol_specs):
             print(f"Portfolio trading period {current_period} was already completed. Skipping...")
             sleep_seconds = max(1, math.ceil((pd.Timestamp(next_period).to_pydatetime() - dt.datetime.now()).total_seconds()))
-            print(f"Sleeping until next period ({sleep_seconds}s).")
+            print(f"Sleeping until next period ({sleep_seconds}s, next: {next_period}).")
             time.sleep(sleep_seconds)
             continue
 
@@ -1005,7 +1005,7 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
             if not tradable_symbol_specs:
                 print("No configured symbols are inside their trading session for this period.")
                 sleep_seconds = max(1, math.ceil((pd.Timestamp(next_period).to_pydatetime() - dt.datetime.now()).total_seconds()))
-                print(f"Cycle done. Sleeping until next period ({sleep_seconds}s).")
+                print(f"Cycle done. Sleeping until next period ({sleep_seconds}s, next: {next_period}).")
                 time.sleep(sleep_seconds)
                 continue
 
@@ -1052,7 +1052,7 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
                 if len(portfolio_apps) == 0:
                     print("No portfolio worker apps were able to connect.")
                     sleep_seconds = max(1, math.ceil((pd.Timestamp(next_period).to_pydatetime() - dt.datetime.now()).total_seconds()))
-                    print(f"Sleeping until next period ({sleep_seconds}s).")
+                    print(f"Sleeping until next period ({sleep_seconds}s, next: {next_period}).")
                     time.sleep(sleep_seconds)
                     continue
 
@@ -1104,7 +1104,7 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
                 if portfolio_app is None:
                     print("Portfolio app failed to connect.")
                     sleep_seconds = max(1, math.ceil((pd.Timestamp(next_period).to_pydatetime() - dt.datetime.now()).total_seconds()))
-                    print(f"Sleeping until next period ({sleep_seconds}s).")
+                    print(f"Sleeping until next period ({sleep_seconds}s, next: {next_period}).")
                     time.sleep(sleep_seconds)
                     continue
                 portfolio_app.optimization_frequency = optimization_frequency
@@ -1148,7 +1148,7 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
                     pass
 
         sleep_seconds = max(1, math.ceil((pd.Timestamp(next_period).to_pydatetime() - dt.datetime.now()).total_seconds()))
-        print(f"Cycle done. Sleeping until next period ({sleep_seconds}s).")
+        print(f"Cycle done. Sleeping until next period ({sleep_seconds}s, next: {next_period}).")
         time.sleep(sleep_seconds)
 
 

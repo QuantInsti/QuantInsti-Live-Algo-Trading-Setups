@@ -10,7 +10,7 @@ This repository provides production-ready trading frameworks for Interactive Bro
 
 The repository includes three specialized trading setups:
 
--   **Multi-Asset Trading (`ibkr-multi-asset/`)**: A strategy-agnostic framework for trading FX, MES futures, XAUUSD spot metals, and crypto with a unified portfolio engine.
+-   **Multi-Asset Trading (`ibkr-multi-asset/`)**: A strategy-agnostic, asset-class-agnostic framework for trading FX, futures, spot metals, crypto, and stocks with a unified portfolio engine. Any IBKR-tradeable symbol from the configured asset lists (`fx_pairs`, `futures_symbols`, `metals_symbols`, `crypto_symbols`, `stock_symbols`) is supported. MES and XAUUSD are the tested defaults, not the limit.
 -   **Forex Trading (`ibkr-forex/`)**: A dedicated framework optimized for currency pairs and FX-specific execution logic.
 -   **Stock Trading (`ibkr-stock/`)**: A modular setup for systematic equity trading with integrated contract details and data acquisition utilities.
 

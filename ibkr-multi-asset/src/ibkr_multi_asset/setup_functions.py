@@ -17,6 +17,19 @@ from copy import deepcopy
 from decimal import Decimal
 from email.message import EmailMessage
 import numpy as np
+
+def _json_safe(val):
+    """Convert pandas/numpy types to JSON-serializable Python natives."""
+    if isinstance(val, (pd.Series, pd.Index)):
+        return [_json_safe(v) for v in val.tolist()]
+    if isinstance(val, pd.DataFrame):
+        return {str(k): _json_safe(v) for k, v in val.to_dict().items()}
+    if isinstance(val, (np.integer,)): return int(val)
+    if isinstance(val, (np.floating,)): return float(val) if np.isfinite(val) else None
+    if isinstance(val, np.ndarray): return [_json_safe(v) for v in val.tolist()]
+    if isinstance(val, dict): return {str(k): _json_safe(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)): return [_json_safe(v) for v in val]
+    return val
 import pandas as pd
 import datetime as dt
 import pytz
@@ -2282,7 +2295,7 @@ def send_stop_loss_order(app, order_id, quantity):
                 (463 in list(app.errors_dict.keys()))
         # If data is true
         if data == True:
-            append_runtime_audit(app, 'stop_loss_rejected', json.dumps(failures, default=str))
+            append_runtime_audit(app, 'stop_loss_rejected', json.dumps(_json_safe(failures)))
             attempts += 1
             order_price = _round_price_to_contract_tick(app, order_price + price_step, side=price_side)
             current_order_id = _next_order_id(app)
@@ -2389,7 +2402,7 @@ def send_take_profit_order(app, order_id, quantity):
                 (463 in list(app.errors_dict.keys()))
         # If data is true
         if data == True:
-            append_runtime_audit(app, 'take_profit_rejected', json.dumps(failures, default=str))
+            append_runtime_audit(app, 'take_profit_rejected', json.dumps(_json_safe(failures)))
             if crypto_short_reject:
                 refreshed_live_quantity = float(_latest_position_for_symbol(app, refresh=True, verbose=False))
                 confirmed_quantity = _normalize_order_quantity(app, abs(refreshed_live_quantity))
@@ -3080,7 +3093,7 @@ def _market_order_submission_failures(app):
         if code in app.errors_dict
     }
     if failures:
-        append_runtime_audit(app, 'market_order_rejected', json.dumps(failures, default=str))
+        append_runtime_audit(app, 'market_order_rejected', json.dumps(_json_safe(failures)))
     return failures
 
 
@@ -4490,6 +4503,11 @@ def save_portfolio_cycle_data(apps, send_email_summary=True):
         if hasattr(app, 'base_df') and isinstance(app.base_df, pd.DataFrame):
             app.base_df.to_csv(app.base_df_address)
     if send_email_summary:
+        try:
+            generate_live_portfolio_report(lead_app)
+        except Exception as exc:
+            if hasattr(lead_app, 'logging'):
+                lead_app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
         send_email(lead_app)
 
 
@@ -4967,7 +4985,8 @@ def send_email(app):
             "- The live portfolio PDF report is attached when available.",
         ]
 
-        report_path = Path("data") / "portfolio_report.pdf"
+        report_path = os.path.join("data", "portfolio_report.pdf")
+        app.logging.info(f"Looking for report at: {os.path.abspath(report_path)} (exists: {os.path.exists(report_path)})")
         subject = f"EPAT Trading App Status | {app.current_period}"
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -4975,13 +4994,13 @@ def send_email(app):
         msg["To"] = to_email
         msg.set_content("\n".join(lines))
 
-        if report_path.exists():
+        if os.path.exists(report_path):
             with open(report_path, "rb") as f:
                 msg.add_attachment(
                     f.read(),
                     maintype="application",
                     subtype="pdf",
-                    filename=report_path.name,
+                    filename=os.path.basename(report_path),
                 )
         else:
             app.logging.warning("Portfolio PDF not found at email time: %s", report_path)

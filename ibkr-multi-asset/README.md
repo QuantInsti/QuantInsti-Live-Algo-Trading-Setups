@@ -7,7 +7,7 @@ Python setup for live portfolio trading with Interactive Brokers across multiple
 
 ## What It Does
 
-- trades a mixed universe of FX, futures, spot metals, crypto, and optionally stocks
+- trades a mixed universe of FX, futures, spot metals, crypto, and optionally stocks, any IBKR-tradeable symbol from the configured asset lists works; MES and XAUUSD are the tested defaults, not the limit
 - keeps strategy logic in `user_config/strategies/`
 - runs a portfolio-level optimization and allocation process
 - persists broker state and trading state to Excel/JSON
