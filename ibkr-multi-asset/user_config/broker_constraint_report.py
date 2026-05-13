@@ -20,9 +20,9 @@ HOST = "127.0.0.1"
 PORT = 7497
 CLIENT_ID = 901
 ACCOUNT = "YOUR_IBKR_ACCOUNT"
-TIMEZONE = "America/Lima"
+TIMEZONE = "America/New_York"
 
-# Universe to inspect :  all assets from best_best_strategy.py / josgt_strategy_backtesting.py
+# Universe to inspect: all assets from the multi-asset setup
 ASSETS = [
     # FX pairs (IDEALPRO)
     {"symbol": "EUR", "secType": "CASH", "exchange": "IDEALPRO", "currency": "USD", "label": "EURUSD"},

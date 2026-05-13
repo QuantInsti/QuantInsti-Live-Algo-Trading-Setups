@@ -394,7 +394,7 @@ def _inverse_variance_weights(cov: pd.DataFrame) -> pd.Series:
 def _cluster_variance(cov: pd.DataFrame, cluster_items: list[str]) -> float:
     subcov = cov.loc[cluster_items, cluster_items]
     weights = _inverse_variance_weights(subcov).values.reshape(-1, 1)
-    variance = float(weights.T @ subcov.values @ weights)
+    variance = float((weights.T @ subcov.values @ weights).item())
     return max(variance, 1e-12)
 
 

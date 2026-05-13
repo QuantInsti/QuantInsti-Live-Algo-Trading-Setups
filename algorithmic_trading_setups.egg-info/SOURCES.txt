@@ -1,0 +1,7 @@
+LICENSE.md
+README.md
+pyproject.toml
+algorithmic_trading_setups.egg-info/PKG-INFO
+algorithmic_trading_setups.egg-info/SOURCES.txt
+algorithmic_trading_setups.egg-info/dependency_links.txt
+algorithmic_trading_setups.egg-info/top_level.txt

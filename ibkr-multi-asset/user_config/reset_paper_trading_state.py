@@ -42,11 +42,14 @@ GENERATED_FILES = [
     DATA_DIR / "database.xlsx",
     DATA_DIR / "email_info.xlsx",
     DATA_DIR / "portfolio_report.pdf",
+    DATA_DIR / "strategy_state.json",
     MODELS_DIR / "optimal_features_df.xlsx",
     MODELS_DIR / "strategy_optimization_manifest.json",
     MODELS_DIR / "strategy_optimization_schedule.json",
     MODELS_DIR / "strategy2_optimal_features_df.xlsx",
     MODELS_DIR / "strategy2_optimization_manifest.json",
+    MODELS_DIR / "josgt_optimal_features_df.xlsx",
+    MODELS_DIR / "josgt_strategy_optimization_manifest.json",
     USER_CONFIG_DIR / "tws.png",
     DATA_DIR / "database.xlsx.bak",
 ]
@@ -57,8 +60,10 @@ GENERATED_LOG_GLOBS = [
 
 EXTRA_DIRS = [
     USER_CONFIG_DIR / "__pycache__",
+    DATA_DIR / "reports",
     HISTORICAL_DIR,
     BASE_FRAMES_DIR,
+    PROJECT_ROOT / "data",   # ghost directory from engine first-run log setup
 ]
 
 MARKER_FILES = [

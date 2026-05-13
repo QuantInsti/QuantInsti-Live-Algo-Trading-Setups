@@ -28,8 +28,8 @@ User guide
 """
 
 # Connection and account settings
-account = os.getenv("IBKR_ACCOUNT", "YOUR_IBKR_ACCOUNT")
-timezone = "America/Lima"
+account = os.getenv("IBKR_ACCOUNT", "DU1234567")
+timezone = "America/New_York"
 host = "127.0.0.1"
 port = 7497
 client_id = 1
@@ -46,17 +46,17 @@ portfolio_leverage = 1.0  # Fallback only; the active strategy can override this
 portfolio_parallel_order_submission = False  # Use one shared IB app while validating the new strategy so execution is easier to audit.
 
 # Strategy controls
-strategy_file = "strategies/josgt_strategy.py"
+strategy_file = "strategies/strategy.py"
 strategy_frequency = "5min"
 strategy_optimization_lookback = 3000
-fixed_max_leverage = 2.0
-long_only_symbols = ["BTC", "ETH"]
+fixed_max_leverage = 1.0
+long_only_symbols = ["ETH"]
 
 # Universe
-fx_pairs = ["EURUSD", "USDJPY"]
+fx_pairs = ["EURUSD"]
 futures_symbols = ["MES"]
 metals_symbols = ["XAUUSD"]
-crypto_symbols = ["BTC", "ETH"]
+crypto_symbols = ["ETH"]
 stock_symbols = []
 
 # Venue metadata
