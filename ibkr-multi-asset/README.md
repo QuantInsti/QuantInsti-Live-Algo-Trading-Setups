@@ -31,11 +31,11 @@ The bundled `user_config/main.py` is configured as a conservative validation pro
 - `portfolio_parallel_order_submission = False`
 - `trading_day_origin = "18:00"` in `America/Lima`
 
-These are defaults, not hard requirements. Change them in [`main.py`](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py).
+These are defaults, not hard requirements. Change them in [`main.py`](user_config/main.py).
 
 ## Default Strategy
 
-The default strategy in [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py) is:
+The default strategy in [strategy.py](user_config/strategies/strategy.py) is:
 
 - moving-average trend following per asset
 - daily parameter optimization using only data before the active trading-day bucket
@@ -105,7 +105,7 @@ ibkr-multi-asset/
 ### Build And Install
 
 ```bash
-cd /home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset
+cd ibkr-multi-asset
 python -m build
 python -m pip install dist/ibkr_multi_asset-1.0.0-py3-none-any.whl --force-reinstall
 ```
@@ -113,7 +113,7 @@ python -m pip install dist/ibkr_multi_asset-1.0.0-py3-none-any.whl --force-reins
 ## Running The Live Setup
 
 ```bash
-cd /home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset
+cd ibkr-multi-asset
 python user_config/main.py
 ```
 
@@ -122,7 +122,7 @@ python user_config/main.py
 Use the standalone utility before writing a backtest or when you want to inspect broker-side execution constraints for a chosen asset list.
 
 Script:
-- [broker_constraint_report.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/broker_constraint_report.py)
+- [broker_constraint_report.py](user_config/broker_constraint_report.py)
 
 Outputs:
 - `user_config/data/reports/broker_constraints_report.json`
@@ -131,7 +131,7 @@ Outputs:
 Run:
 
 ```bash
-cd /home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset
+cd ibkr-multi-asset
 python user_config/broker_constraint_report.py
 ```
 

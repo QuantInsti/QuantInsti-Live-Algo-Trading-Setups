@@ -223,7 +223,7 @@ class trading_app(EClient, EWrapper):
             self.strategy_file = strategy_file
         
     # This is an EWrapper callback function that is triggered when an error is received from the IBKR server.
-    def error(self, reqId, code, msg, advancedOrderRejectJson=''):
+    def error(self, reqId, code, msg, *args, **kwargs):
         # This comment explains the purpose of the error callback.
         ''' Called if an error occurs '''
         # Store the error message in the errors dictionary with the code as the key.

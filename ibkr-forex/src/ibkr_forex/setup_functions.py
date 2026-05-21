@@ -22,7 +22,7 @@ from ibkr_forex import ib_functions as ibf
 from concurrent.futures import ThreadPoolExecutor
 from ibapi.order_cancel import OrderCancel
 
-STRATEGY_FILE = "strategies/strategy.py"
+STRATEGY_FILE = stra.__file__  # derives from whichever strategy module was loaded
 
 def connection_monitor(app):
     ''' Check continuously if there's a need to disconnect the app '''

@@ -22,7 +22,7 @@ This package centers on:
 ## Development Workflow
 
 ```bash
-cd /home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset
+cd ibkr-multi-asset
 python -m build
 python -m pip install dist/ibkr_multi_asset-1.0.0-py3-none-any.whl --force-reinstall
 python user_config/main.py

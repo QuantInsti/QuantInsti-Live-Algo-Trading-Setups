@@ -12,6 +12,7 @@ import time
 import pickle
 import inspect
 import logging
+from pathlib import Path
 import numpy as np
 import datetime as dt
 from threading import Thread
@@ -50,8 +51,11 @@ if now_.second < 10:
 else:
     second = now_.second
 
+# Ensure log directory exists before writing
+_log_dir = str(Path.cwd() / "data" / "log")
+os.makedirs(_log_dir, exist_ok=True)
 # Save all the trading app info in the following log file
-logging.basicConfig(filename=f'data/log/log_file_{now_.year}_{month}_{day}_{hour}_{minute}_{second}.log',
+logging.basicConfig(filename=os.path.join(_log_dir, f'log_file_{now_.year}_{month}_{day}_{hour}_{minute}_{second}.log'),
                     level=logging.DEBUG,
                     format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
 
@@ -75,7 +79,7 @@ def run_app(host, port, account, client_id, timezone, now_, account_currency, sy
     # A while loop to run the app, we will break the loop whenever we finish running the app for the current period
     while True:
         # Create an object of the app class
-        app = trading_app(logging, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,  
+        app = trading_app(logging, host, port, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,  
                           market_open_time, market_close_time, 
                           previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail, leverage)
                 
@@ -357,14 +361,24 @@ def run_trading_setup_loop(host, port, account, client_id, data_frequency, londo
 
 def main():
 
+    # Load .env before extracting variables from main.py
+    from dotenv import load_dotenv
+    load_dotenv(Path.cwd() / ".env")
     # Get the variables set in the main file (user_config/main.py)
     try:
-        variables = tf.extract_variables('main.py') # Assumes main.py is in CWD relative to where engine.py is run
+        main_path = str(Path.cwd() / "main.py")
+        variables = tf.extract_variables(main_path)
     except FileNotFoundError:
         print("CRITICAL ERROR: user_config/main.py not found. Please ensure it exists in the correct directory.")
         logging.critical("user_config/main.py not found. Setup cannot proceed.")
         return # Cannot proceed without main configurations
-
+    # Fall back to os.environ for any variables AST could not extract (e.g. os.getenv calls)
+    _env_map = {"account": "IBKR_ACCOUNT", "smtp_username": "SMTP_USERNAME", "to_email": "TO_EMAIL", "password": "SMTP_APP_PASSWORD"}
+    for _key in ("account", "host", "port", "client_id", "smtp_username", "to_email", "password", "timezone", "account_currency", "symbol", "data_frequency", "local_restart_hour", "historical_data_address", "base_df_address", "train_span", "test_span_days", "seed", "trail", "leverage"):
+        if _key not in variables:
+            _env = os.environ.get(_env_map.get(_key, _key.upper()), os.environ.get(_key.upper(), os.environ.get(_key)))
+            if _env:
+                variables[_key] = _env
     # Essential variables with error handling
     try:
         host = variables['host']
@@ -394,11 +408,11 @@ def main():
         return
 
     # --- Path Construction ---
-    # Assume 'data' and 'data/models' are subdirectories of where 'main.py' is (i.e., CWD)
-    # This is a common convention for user-managed configurations.
-    data_dir = 'data'
-    models_dir = os.path.join(data_dir, 'models')
-    log_dir = os.path.join(data_dir, 'log') # For logger path if needed, though logger already prepends data/log
+    # All data is stored under user_config/data/ (isolated per setup, not shared)
+    _user_config = Path.cwd()
+    data_dir = str(_user_config / "data")
+    models_dir = str(_user_config / "data" / "models")
+    log_dir = str(_user_config / "data" / "log")
 
     # Ensure directories exist
     if not os.path.exists(data_dir): os.makedirs(data_dir)

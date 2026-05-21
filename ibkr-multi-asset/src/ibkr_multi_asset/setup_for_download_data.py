@@ -7,6 +7,7 @@
 """
 
 # Import the necessary libraries
+import os
 import time
 import numpy as np
 import pandas as pd
@@ -153,7 +154,7 @@ class app_for_download_data(EWrapper, EClient):
                 time.sleep(3)
                 self.disconnect()
             
-    def error(self, reqId, code, msg, advancedOrderRejectJson=''):
+    def error(self, reqId, code, msg, *args, **kwargs):
         ''' Called if an error occurs '''
         
         # Save tje ,essage
@@ -390,7 +391,8 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
     # If the historical minute data variable is a dataframe
     if isinstance(historical_minute_data, pd.DataFrame):
         try:
-            historical_resampled_data = pd.read_csv('data/'+historical_data_address, index_col=0)
+            resampled_path = historical_data_address if os.path.isabs(historical_data_address) or historical_data_address.startswith("data") else 'data/'+historical_data_address
+            historical_resampled_data = pd.read_csv(resampled_path, index_col=0)
             historical_resampled_data.index = pd.to_datetime(historical_resampled_data.index)
             if (historical_minute_data.index[-1].day==historical_resampled_data.index[-1].day) or \
                 (historical_minute_data.index[-1].day+1==historical_resampled_data.index[-1].day):
@@ -419,7 +421,8 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
         historical_minute_data.index = pd.to_datetime(historical_minute_data.index)
 
         try:
-            historical_resampled_data = pd.read_csv('data/'+historical_data_address, index_col=0)
+            resampled_path = historical_data_address if os.path.isabs(historical_data_address) or historical_data_address.startswith("data") else 'data/'+historical_data_address
+            historical_resampled_data = pd.read_csv(resampled_path, index_col=0)
             historical_resampled_data.index = pd.to_datetime(historical_resampled_data.index)
             if (historical_minute_data.index[-1].day==historical_resampled_data.index[-1].day) or \
                 (historical_minute_data.index[-1].day+1==historical_resampled_data.index[-1].day):
@@ -511,8 +514,14 @@ def run_hist_data_download_app(historical_minute_data, historical_data_address, 
         
     # Set the now datetime with the 23:59:00 time
     now = datetime(yearEnd,monthEnd,dayEnd,23,59,00)
-    # Get the Saturdays list
+    # Get the Saturdays list (from 2005 to now — typically ~1000 entries)
     saturdays = tf.saturdays_list(now.date())
+    # Truncate to only cover the download_span period so the download completes
+    # in minutes rather than hours.  Parse span days (e.g. '10 D' → 10).
+    span_days = int(''.join(c for c in str(download_span) if c.isdigit()) or '10')
+    # saturdays is sorted most-recent-first; keep enough to cover span_days + 1 week buffer
+    needed = max(2, span_days // 7 + 2)
+    saturdays = saturdays[:needed]
     
     # Run the download app
     app_for_download_data('127.0.0.1', 0, historical_minute_data, update, contract, now, download_span, timezone, saturdays)

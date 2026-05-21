@@ -168,8 +168,11 @@ def resample_df(dfraw,frequency,start='00h00min'):
 
     # Create a datetime column based on the index
     df['datetime'] = df.index
-    # Create a new dataframe
-    df2 = (df.groupby(pd.Grouper(freq=pandas_frequency, origin=df.index[0]))
+    # Create a new dataframe (origin only supported for Tick frequencies like min)
+    grouper_kwargs = dict(freq=pandas_frequency)
+    if pandas_frequency_string == 'min':
+        grouper_kwargs['origin'] = df.index[0]
+    df2 = (df.groupby(pd.Grouper(**grouper_kwargs))
            # Resample the Open price
             .agg(Open=('Open','first'),
                  # Resample the Close price
@@ -619,6 +622,22 @@ def save_xlsx(dict_df, path):
         elif "Execution Time" in incoming.columns:
             incoming = incoming.sort_values("Execution Time", kind="stable", na_position="last").reset_index(drop=True)
         merged_sheets[key] = incoming
+
+    # Guard: ensure every sheet has at least its schema columns from WORKBOOK_SCHEMAS
+    try:
+        from ibkr_multi_asset.create_database import WORKBOOK_SCHEMAS
+        for sheet_name, schema_cols in WORKBOOK_SCHEMAS.items():
+            if sheet_name in merged_sheets:
+                df = merged_sheets[sheet_name]
+                if not isinstance(df, pd.DataFrame) or len(df.columns) == 0:
+                    merged_sheets[sheet_name] = pd.DataFrame(columns=schema_cols)
+                else:
+                    for col in schema_cols:
+                        if col not in df.columns:
+                            df[col] = pd.NA
+                    merged_sheets[sheet_name] = df
+    except Exception:
+        pass
 
     try:
         writer = pd.ExcelWriter(path, engine="openpyxl")

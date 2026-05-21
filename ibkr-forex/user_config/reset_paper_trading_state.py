@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 import threading
@@ -8,7 +9,6 @@ from decimal import Decimal, ROUND_FLOOR
 from pathlib import Path
 from threading import Event
 
-import os
 import traceback
 from dotenv import load_dotenv
 from ibapi.client import EClient
@@ -22,7 +22,7 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from ibkr_multi_asset import trading_functions as tf
+from ibkr_forex import trading_functions as tf
 
 
 USER_CONFIG_DIR = Path(__file__).resolve().parent
@@ -30,7 +30,6 @@ DATA_DIR = USER_CONFIG_DIR / "data"
 MODELS_DIR = DATA_DIR / "models"
 LOG_DIR = DATA_DIR / "log"
 HISTORICAL_DIR = DATA_DIR / "historical"
-BASE_FRAMES_DIR = DATA_DIR / "base_frames"
 
 USER_MAIN_PATH = USER_CONFIG_DIR / "main.py"
 load_dotenv(USER_CONFIG_DIR / ".env")
@@ -44,15 +43,15 @@ RESTING_LIMIT_WAIT_SECONDS = 20
 GENERATED_FILES = [
     DATA_DIR / "database.xlsx",
     DATA_DIR / "email_info.xlsx",
-    DATA_DIR / "portfolio_report.pdf",
-    DATA_DIR / "strategy_state.json",
-    MODELS_DIR / "optimal_features_df.xlsx",
+    DATA_DIR / "app_base_df.csv",
+    DATA_DIR / "historical_data.csv",
+    MODELS_DIR / "stra_opt_*.pickle",
+    MODELS_DIR / "model_object_*.pickle",
+    MODELS_DIR / "hmm_model_*.pickle",
     MODELS_DIR / "strategy_optimization_manifest.json",
-    MODELS_DIR / "strategy_optimization_schedule.json",
-    MODELS_DIR / "strategy2_optimal_features_df.xlsx",
-    MODELS_DIR / "strategy2_optimization_manifest.json",
-    # (legacy strategy paths removed)
+    MODELS_DIR / "optimal_features_df.xlsx",
     USER_CONFIG_DIR / "tws.png",
+    USER_CONFIG_DIR / "Screenshot.png",
     DATA_DIR / "database.xlsx.bak",
 ]
 
@@ -62,10 +61,8 @@ GENERATED_LOG_GLOBS = [
 
 EXTRA_DIRS = [
     USER_CONFIG_DIR / "__pycache__",
-    DATA_DIR / "reports",
+    USER_CONFIG_DIR / "strategies" / "__pycache__",
     HISTORICAL_DIR,
-    BASE_FRAMES_DIR,
-    PROJECT_ROOT / "data",   # ghost directory from engine first-run log setup
 ]
 
 MARKER_FILES = [
@@ -217,54 +214,9 @@ def normalize_quantity(raw_qty: float) -> float:
     return qty
 
 
-def _positive_float(value) -> float | None:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if parsed > 0:
-        return parsed
-    return None
-
-
-def configured_quantity_step_for_contract(contract: Contract) -> float | None:
-    sec_type = str(getattr(contract, "secType", "") or "").upper()
-    local_symbol = str(getattr(contract, "localSymbol", "") or "").upper()
-    symbol = str(getattr(contract, "symbol", "") or "").upper()
-    symbol_candidates = {candidate for candidate in (local_symbol, symbol, local_symbol.replace(".", ""), symbol.replace(".", "")) if candidate}
-
-    if sec_type == "CMDTY":
-        for map_name in ("metals_quantity_steps", "metal_quantity_steps"):
-            step_map = user_main.get(map_name, {})
-            if isinstance(step_map, dict):
-                for key, value in step_map.items():
-                    if str(key).upper().replace(".", "") in symbol_candidates:
-                        configured = _positive_float(value)
-                        if configured is not None:
-                            return configured
-        for scalar_name in ("metals_quantity_step", "metal_quantity_step", "metals_default_quantity_step"):
-            configured = _positive_float(user_main.get(scalar_name))
-            if configured is not None:
-                return configured
-
-    return None
-
-
 def quantity_step_for_contract(contract: Contract) -> float:
-    configured_step = configured_quantity_step_for_contract(contract)
-    if configured_step is not None:
-        return configured_step
-
     sec_type = str(getattr(contract, "secType", "") or "").upper()
     if sec_type == "CASH":
-        return 1.0
-    if sec_type == "FUT":
-        return 1.0
-    if sec_type == "CMDTY":
-        return 1.0
-    if sec_type == "CRYPTO":
-        return 1e-8
-    if sec_type == "STK":
         return 1.0
     return 1.0
 
@@ -302,18 +254,9 @@ def is_effectively_flat(quantity: float, step: float) -> bool:
 def normalized_close_contract(contract) -> Contract:
     close_contract = Contract()
     for attr in (
-        "conId",
-        "symbol",
-        "secType",
-        "lastTradeDateOrContractMonth",
-        "strike",
-        "right",
-        "multiplier",
-        "exchange",
-        "primaryExchange",
-        "currency",
-        "localSymbol",
-        "tradingClass",
+        "conId", "symbol", "secType", "lastTradeDateOrContractMonth",
+        "strike", "right", "multiplier", "exchange", "primaryExchange",
+        "currency", "localSymbol", "tradingClass",
     ):
         try:
             value = getattr(contract, attr)
@@ -321,18 +264,11 @@ def normalized_close_contract(contract) -> Contract:
             continue
         if value not in (None, "", 0):
             setattr(close_contract, attr, value)
-
     sec_type = str(getattr(close_contract, "secType", "")).upper()
     exchange = str(getattr(close_contract, "exchange", "") or "").upper()
     if not exchange:
         if sec_type == "CASH":
             close_contract.exchange = "IDEALPRO"
-        elif sec_type == "FUT":
-            close_contract.exchange = "CME"
-        elif sec_type == "CMDTY":
-            close_contract.exchange = "SMART"
-        elif sec_type == "CRYPTO":
-            close_contract.exchange = "PAXOS"
     return close_contract
 
 
@@ -381,31 +317,6 @@ def best_live_price(app: ClosePositionsApp) -> float | None:
     return None
 
 
-def request_contract_details(app: ClosePositionsApp, contract: Contract):
-    req_id = app.reserve_order_id()
-    app.contract_details = []
-    app.contract_details_event.clear()
-    app.reqContractDetails(req_id, contract)
-    if not app.contract_details_event.wait(timeout=REQUEST_WAIT_SECONDS):
-        raise TimeoutError("Timed out waiting for contract details from IB")
-    return list(app.contract_details)
-
-
-def contract_min_tick(app: ClosePositionsApp, contract: Contract) -> float | None:
-    try:
-        details = request_contract_details(app, contract)
-    except Exception:
-        return None
-    for item in details:
-        try:
-            min_tick = float(getattr(item, "minTick", 0.0))
-        except (TypeError, ValueError):
-            continue
-        if min_tick > 0:
-            return min_tick
-    return None
-
-
 def round_price_to_tick(price: float, tick: float, side: str) -> float:
     if tick <= 0:
         return float(price)
@@ -426,23 +337,11 @@ def marketable_exit_limit_price(app: ClosePositionsApp, contract: Contract, acti
     live_price = best_live_price(app)
     if live_price is None:
         raise RuntimeError("No live market price is available for fallback IOC limit close")
-    min_tick = contract_min_tick(app, contract) or 0.0
+    min_tick = 0.00005
     aggressiveness = max(0.0, float(aggressiveness))
     if action.upper() == "SELL":
         return round_price_to_tick(live_price * (1.0 - aggressiveness), min_tick, "down")
     return round_price_to_tick(live_price * (1.0 + aggressiveness), min_tick, "up")
-
-
-def wait_until_flat(app: ClosePositionsApp, contract: Contract, timeout_seconds: int) -> float:
-    deadline = time.time() + max(int(timeout_seconds), 1)
-    last_qty = 0.0
-    while time.time() < deadline:
-        refresh_positions(app)
-        last_qty = current_position_for_contract(app, contract)
-        if abs(last_qty) <= 1e-12:
-            return 0.0
-        time.sleep(1)
-    return last_qty
 
 
 def wait_until_flat_with_step(app: ClosePositionsApp, contract: Contract, timeout_seconds: int, step: float) -> float:
@@ -474,7 +373,7 @@ def flatten_contract_position(app: ClosePositionsApp, position_item: dict) -> No
         return
 
     order_id = app.reserve_order_id()
-    print(f"- {symbol} {getattr(contract, 'secType', '')} {position} -> {action} {quantity} (order id {order_id})")
+    print(f"- {symbol} {position} -> {action} {quantity} (order id {order_id})")
     app.placeOrder(order_id, contract, market_order(action, quantity))
 
     remaining_qty = wait_until_flat_with_step(app, contract, FLAT_WAIT_SECONDS, quantity_step)
@@ -502,7 +401,7 @@ def flatten_contract_position(app: ClosePositionsApp, position_item: dict) -> No
         print(f"  Flattened {symbol} with fallback IOC limit order.")
         return
 
-    print(f"  IOC fallback did not flatten {symbol}. Trying a short-lived resting DAY limit close...")
+    print(f"  IOC fallback did not flatten {symbol}. Trying a resting DAY limit close...")
     resting_price = marketable_exit_limit_price(app, contract, action, aggressiveness=0.05)
     resting_order_id = app.reserve_order_id()
     resting_qty = normalize_quantity_to_step(remaining_qty, quantity_step)
@@ -524,6 +423,7 @@ def flatten_contract_position(app: ClosePositionsApp, position_item: dict) -> No
 
 
 def connect_app() -> ClosePositionsApp:
+    # AST extractor can't parse os.getenv(...) expressions; fall back to env vars or defaults
     account = user_main.get("account") or os.getenv("IBKR_ACCOUNT", "DU1234567")
     host = user_main.get("host") or os.getenv("IBKR_HOST", "127.0.0.1")
     port = int(user_main.get("port") or os.getenv("IBKR_PORT", "7497"))
@@ -614,11 +514,15 @@ def delete_path(path: Path) -> None:
 
 def cleanup_generated_outputs() -> None:
     for path in GENERATED_FILES:
-        delete_path(path)
+        if "*" in str(path):
+            for p in sorted(path.parent.glob(path.name)):
+                delete_path(p)
+        else:
+            delete_path(path)
 
     for pattern in GENERATED_LOG_GLOBS:
-        for path in sorted(LOG_DIR.glob(pattern)):
-            delete_path(path)
+        for p in sorted(LOG_DIR.glob(pattern)):
+            delete_path(p)
 
     for path in EXTRA_DIRS:
         delete_path(path)

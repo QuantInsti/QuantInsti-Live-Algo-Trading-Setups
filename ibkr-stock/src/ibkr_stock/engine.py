@@ -63,6 +63,9 @@ else:
     second = now_.second
 
 # Configure the logging system to save all trading app info to a uniquely named log file.
+# Ensure required data directories exist before any file I/O.
+os.makedirs('data/log', exist_ok=True)
+os.makedirs('data/models', exist_ok=True)
 logging.basicConfig(filename=f'data/log/log_file_{now_.year}_{month}_{day}_{hour}_{minute}_{second}.log',
                     # Set the logging level to DEBUG to capture all levels of messages.
                     level=logging.DEBUG,
@@ -165,8 +168,8 @@ def daily_parameter_optimization(stra_opt_dates_filename, model_datetime, additi
 # Function to run the trading logic for an intraday strategy for a single period.
 def intraday_trading_sequence(app, current_period, next_period, trader_start_datetime, day_datetime_before_end):
 
-    # Check if the current time is before the designated end-of-day trading cutoff.
-    if dt.datetime.now() < day_datetime_before_end:
+    # Check if the current time is before the actual trading day end (not the last-period cutoff).
+    if dt.datetime.now() < app.trader_end_datetime:
 
         # Check the 'periods_traded' dataframe to see if the current period has already been traded (trade_done == 0 means not traded).
         if app.periods_traded.loc[app.periods_traded['trade_time']==current_period]['trade_done'].values[0] == 0:
@@ -252,6 +255,8 @@ def intraday_trading_sequence(app, current_period, next_period, trader_start_dat
         print("Let's wait until the new trading day begins...")
         # Log the same message.
         logging.info("Let's wait until the new trading day begins...")
+        # Wait until the next trading day's start time.
+        time.sleep(0 if (app.trader_next_start_datetime - dt.datetime.now()).total_seconds() < 0 else (app.trader_next_start_datetime - dt.datetime.now()).total_seconds())
         # Return 0 to signal completion.
         return 0
     
@@ -464,9 +469,9 @@ def run_trading_setup_loop(host, daily_optimization, dict_dates, contract, stra_
         # Log the end of liquid hours.
         logging.info(f'\t - Market liquid end hour is {trader_end_datetime}')
         # Print the adjusted start time for trading (after the initial market volatility).
-        print(f'\t - trader start datetime with minutes after market opens: {trader_start_datetime}')
+        print(f'\t - trader start datetime with minutes after market opens: {trader_start_adj_datetime}')
         # Log the adjusted start time.
-        logging.info(f'\t - trader start datetime with minutes after market opens: {trader_start_datetime}')
+        logging.info(f'\t - trader start datetime with minutes after market opens: {trader_start_adj_datetime}')
         # Print the adjusted end time for trading (before the final market close).
         print(f'\t - trader end datetime with minutes before market closes: {day_datetime_before_end}')
         # Log the adjusted end time.
@@ -1297,6 +1302,9 @@ def loop_for_close_to_open_trading(trader_start_adj_datetime, market_week_open_t
                     if (dt.datetime.now() >= day_datetime_before_end) and (dt.datetime.now() < trader_end_datetime):
                         # Execute the core strategy with 'close_position=False' to open a new position.
                         run_close_to_open_strategy(app, current_period, next_period, auto_restart_end_datetime)
+                        # If the app disconnected (position already opened), sleep to avoid spin-looping.
+                        if not app.isConnected():
+                            time.sleep(60)
                     # If the time has passed this window.
                     else:
                         # Break the loop.
@@ -1334,12 +1342,27 @@ def loop_for_close_to_open_trading(trader_start_adj_datetime, market_week_open_t
                                                        
                     # Break the loop after the action is performed once.
                     break
+
+                # Wait until the end-of-day window to open a new position, avoiding an
+                # immediate re-entry loop while the current period is still marked done.
+                print("Position handling complete. Waiting until end-of-day to open a new position...")
+                logging.info("Position handling complete. Waiting until end-of-day to open a new position...")
+                while dt.datetime.now() < day_datetime_before_end:
+                    time.sleep(60)
                 
 # Main function that serves as the entry point for the entire application.
 def main():   
      
     # Extract all user-defined variables from the 'main.py' configuration file using a helper from 'trading_functions.py'.
     variables = tf.extract_variables('main.py')
+
+    # Fall back to os.environ for any variables AST could not extract (e.g. os.getenv calls)
+    _env_map = {"account": "IBKR_ACCOUNT", "smtp_username": "SMTP_USERNAME", "to_email": "TO_EMAIL", "password": "SMTP_APP_PASSWORD"}
+    for _key in ("account", "host", "port", "client_id", "smtp_username", "to_email", "password", "timezone", "account_currency", "symbol", "data_frequency", "restart_time", "base_df_address", "train_span", "test_span_days", "seed", "trail", "leverage", "fractional_shares", "strategy_file", "daily_optimization", "trading_type", "primary_exchange", "tick_size", "smart_bool", "risk_management_bool", "time_after_open", "time_before_close", "stock_timezone", "optimization"):
+        if _key not in variables:
+            _env = os.environ.get(_env_map.get(_key, _key.upper()), os.environ.get(_key.upper(), os.environ.get(_key)))
+            if _env:
+                variables[_key] = _env
     
     # Assign the 'daily_optimization' boolean from the configuration variables.
     daily_optimization = variables['daily_optimization']

@@ -9,6 +9,8 @@
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -28,8 +30,8 @@ User guide
 """
 
 # Connection and account settings
-account = os.getenv("IBKR_ACCOUNT", "DU1234567")
-timezone = "America/New_York"
+account = os.getenv("IBKR_ACCOUNT")  # must be set in .env
+timezone = "America/Lima"
 host = "127.0.0.1"
 port = 7497
 client_id = 1
@@ -43,20 +45,20 @@ trail = False
 strict_targets_validation = True
 optimization_frequency = "daily"  # supported: "daily", "weekly"
 portfolio_leverage = 1.0  # Fallback only; the active strategy can override this with optimized portfolio leverage.
-portfolio_parallel_order_submission = False  # Use one shared IB app while validating the new strategy so execution is easier to audit.
+portfolio_parallel_order_submission = True  # Use one shared IB app while validating the new strategy so execution is easier to audit.
 
 # Strategy controls
 strategy_file = "strategies/strategy.py"
-strategy_frequency = "5min"
-strategy_optimization_lookback = 3000
+strategy_frequency = "5min"  # default fallback; per-asset overrides in strategy.py
+strategy_optimization_lookback = 50000  # ~35 days of 5min bars → enough for 1D/4h MA warmup
 fixed_max_leverage = 1.0
-long_only_symbols = ["ETH"]
+long_only_symbols = ["ETH", "BTC"]
 
 # Universe
-fx_pairs = ["EURUSD"]
+fx_pairs = ["EURUSD", "USDJPY"]
 futures_symbols = ["MES"]
 metals_symbols = ["XAUUSD"]
-crypto_symbols = ["ETH"]
+crypto_symbols = ["ETH", "BTC"]
 stock_symbols = []
 
 # Venue metadata
@@ -76,10 +78,10 @@ crypto_exchange = "PAXOS"
 crypto_currency = "USD"
 
 # Notifications
-smtp_username = os.getenv("SMTP_USERNAME", "your_email@example.com")
-to_email = os.getenv("TO_EMAIL", "recipient@example.com")
+smtp_username = os.getenv("SMTP_USERNAME")
+to_email = os.getenv("TO_EMAIL")
 # Use a provider-specific app password or token and keep it out of version control.
-password = os.getenv("SMTP_APP_PASSWORD", "YOUR_SMTP_APP_PASSWORD")
+password = os.getenv("SMTP_APP_PASSWORD")
 
 
 from ibkr_multi_asset import engine

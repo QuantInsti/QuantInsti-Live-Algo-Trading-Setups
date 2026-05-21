@@ -301,6 +301,8 @@ class trading_app(EClient, EWrapper):
             if actual_code in (162, 165, 166, 200, 354, 366, 10299):
                 self.hist_data_events[str(reqId)].set()
 
+        # Codes that are harmless during risk-management cancellation sweeps
+        _suppressed_codes = {202, 10147, 10148}
         info_codes = {2100, 2103, 2104, 2106, 2158}
         message_key = (actual_code, str(actual_msg))
         is_repeated_info = actual_code in info_codes
@@ -308,6 +310,8 @@ class trading_app(EClient, EWrapper):
             if message_key not in self._seen_info_messages:
                 self._seen_info_messages.add(message_key)
                 self.logging.info('[%s] IB info: %s - %s', self.ticker, actual_code, actual_msg)
+        elif actual_code in _suppressed_codes:
+            self.logging.info('[%s] IB info (suppressed): %s - %s', self.ticker, actual_code, actual_msg)
         else:
             print('Error: {} - {} - {}'.format(reqId, actual_code, actual_msg))
             self.logging.info('Error: {} - {} - {}'.format(reqId, actual_code, actual_msg))

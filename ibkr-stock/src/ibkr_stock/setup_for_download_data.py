@@ -154,7 +154,7 @@ class app_for_download_data(EWrapper, EClient):
                 self.disconnect()
             
     # This is an EWrapper callback that is triggered when an error is received from IBKR.
-    def error(self, reqId, code, msg, advancedOrderRejectJson=''):
+    def error(self, reqId, code, msg, *args, **kwargs):
         # This comment indicates the function is called if an error occurs.
         ''' Called if an error occurs '''
         

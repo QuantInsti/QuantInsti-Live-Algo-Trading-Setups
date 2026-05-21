@@ -16,7 +16,7 @@ The engine and the strategy layer are separated. You change runtime and broker s
 
 ## Default Runtime
 
-The bundled configuration in [main.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py) is a validation profile:
+The bundled configuration in [main.py](user_config/main.py) is a validation profile:
 
 - universe:
   - `EURUSD`
@@ -34,7 +34,7 @@ The bundled configuration in [main.py](/home/josgt/Downloads/alpha_quant/QuantIn
 
 ## Default Strategy
 
-The bundled strategy in [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py) is:
+The bundled strategy in [strategy.py](user_config/strategies/strategy.py) is:
 
 - moving-average trend following per asset
 - daily optimization of:
@@ -62,13 +62,13 @@ The strategy is replaceable. Future users can point `strategy_file` to another m
 
 ## Files You Will Edit Most Often
 
-- [main.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py)
+- [main.py](user_config/main.py)
   - account settings
   - market universe
   - runtime cadence
   - broker metadata
   - strategy selection
-- [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py)
+- [strategy.py](user_config/strategies/strategy.py)
   - signal logic
   - portfolio allocation logic
   - optimization logic
@@ -108,7 +108,7 @@ Log directory:
 
 There is a standalone broker-constraint inspection utility:
 
-- [broker_constraint_report.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/broker_constraint_report.py)
+- [broker_constraint_report.py](user_config/broker_constraint_report.py)
 
 Use it to generate:
 - `broker_constraints_report.json`

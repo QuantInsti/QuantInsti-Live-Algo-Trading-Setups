@@ -22,7 +22,7 @@ from ibapi.wrapper import EWrapper
 class trading_app(EClient, EWrapper):
                     
     # Initialize the class - and inherited classes
-    def __init__(self, logging, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,
+    def __init__(self, logging, host, port, account, account_currency, symbol, timezone, data_frequency, historical_data_address, base_df_address,
                  market_open_time, market_close_time,
                  previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, current_period, previous_period, next_period, train_span, test_span, trail, leverage):
         
@@ -31,6 +31,10 @@ class trading_app(EClient, EWrapper):
         
         # Start time to get later the number of seconds used to run the whole strategy per period
         self.app_start_time = dt.datetime.now()
+        
+        # Store the connection parameters
+        self.host = host
+        self.port = port
         
         # The account's base currency
         self.account_currency = account_currency

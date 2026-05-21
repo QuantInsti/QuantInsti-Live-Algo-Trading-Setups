@@ -9,6 +9,8 @@ from ibkr_forex import engine
 """
 
 # Import the necessary libraries
+import os
+from pathlib import Path
 import pandas as pd
 from ibkr_forex import trading_functions as tf
 
@@ -65,7 +67,9 @@ def create_trading_info_workbook(smtp_username, to_email, password):
                  'periods_traded':periods_traded}
          
     # Save the dataframes into a single Excel workbook
-    tf.save_xlsx(dict_df = dictfiles, path = 'data/database.xlsx')
+    data_dir = str(Path.cwd() / "data")
+    os.makedirs(data_dir, exist_ok=True)
+    tf.save_xlsx(dict_df = dictfiles, path = os.path.join(data_dir, 'database.xlsx'))
     
     # Create the email information dataframe
     email_password = pd.DataFrame(columns=['smtp_username', 'to_email', 'password'], index=[0])
@@ -76,4 +80,4 @@ def create_trading_info_workbook(smtp_username, to_email, password):
     # The app password that was obtained in Google. You need to allow the app password in Google: https://support.google.com/mail/answer/185833?hl=en
     email_password.loc[0, 'password'] = password
     # Save the email dataframe
-    email_password.to_excel('data/email_info.xlsx')
+    email_password.to_excel(os.path.join(data_dir, 'email_info.xlsx'))

@@ -11,19 +11,19 @@ This document is for modifying the multi-asset source code, rebuilding the wheel
 ### Runtime Layer
 
 Main runtime files:
-- [engine.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/engine.py)
-- [setup.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/setup.py)
-- [setup_functions.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/setup_functions.py)
-- [trading_functions.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/trading_functions.py)
-- [report_generator.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/report_generator.py)
+- [engine.py](src/ibkr_multi_asset/engine.py)
+- [setup.py](src/ibkr_multi_asset/setup.py)
+- [setup_functions.py](src/ibkr_multi_asset/setup_functions.py)
+- [trading_functions.py](src/ibkr_multi_asset/trading_functions.py)
+- [report_generator.py](src/ibkr_multi_asset/report_generator.py)
 
 ### Strategy Layer
 
 Bundled default strategy:
-- [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py)
+- [strategy.py](user_config/strategies/strategy.py)
 
 Strategy selection is runtime-configurable through:
-- [main.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py)
+- [main.py](user_config/main.py)
 
 The engine loads the active strategy through:
 - `ibkr_multi_asset.strategy_runtime`
@@ -104,7 +104,7 @@ Helper scripts:
 ### Change Runtime Settings
 
 Edit:
-- [main.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py)
+- [main.py](user_config/main.py)
 
 Examples:
 - connection settings
@@ -124,7 +124,7 @@ The bundled default strategy is trend-following plus HRP, but the interface is i
 ### Change Broker Execution Logic
 
 Edit:
-- [setup_functions.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/setup_functions.py)
+- [setup_functions.py](src/ibkr_multi_asset/setup_functions.py)
 
 Typical changes:
 - quantity rounding
@@ -136,12 +136,12 @@ Typical changes:
 ### Change Reporting
 
 Edit:
-- [report_generator.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/report_generator.py)
+- [report_generator.py](src/ibkr_multi_asset/report_generator.py)
 
 ### Change Pre-Backtest Constraint Discovery
 
 Edit:
-- [broker_constraint_report.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/broker_constraint_report.py)
+- [broker_constraint_report.py](user_config/broker_constraint_report.py)
 
 This script is intentionally standalone and should remain reusable outside the live setup.
 

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from threading import Event
 from threading import Thread
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent import futures
 from ibkr_forex import trading_functions as tf
 from ibapi.client import EClient
@@ -83,17 +83,24 @@ class app_for_download_data(EWrapper, EClient):
             self.end_df = pd.read_csv(self.file_name, index_col=0)
             # Set the index to datetime type
             self.end_df.index = pd.to_datetime(self.end_df.index)
-            # From this first date to now we're going to download data
-            first_date = self.end_df.index[-1].strftime('%Y%m%d-%H:%M:%S')  
-            # Subset the Saturdays list from the first date onwards
-            self.saturdays = [date0 for date0 in saturdays if date0>=first_date]
-            
-            if (len(self.saturdays)==1) and (self.saturdays[0] >= first_date):
-                return
+            # Handle empty or corrupted file: force fresh download
+            if self.end_df.empty:
+                self.end_df = pd.DataFrame()
+                self.saturdays = saturdays
+            else:
+                # From this first date to now we're going to download data
+                first_date = self.end_df.index[-1].strftime('%Y%m%d-%H:%M:%S')  
+                # Subset the Saturdays list from the first date onwards
+                self.saturdays = [date0 for date0 in saturdays if date0>=first_date]
+                if (len(self.saturdays)==1) and (self.saturdays[0] >= first_date):
+                    return
         # In case you want to just fill
         elif update == 'fill':
             self.end_df = pd.read_csv(self.file_name, index_col=0)
             self.end_df.index = pd.to_datetime(self.end_df.index)
+            if self.end_df.empty:
+                self.end_df = pd.DataFrame()
+                self.saturdays = saturdays
             self.now = now
             self.saturdays = saturdays
         
@@ -153,7 +160,7 @@ class app_for_download_data(EWrapper, EClient):
                 time.sleep(3)
                 self.disconnect()
             
-    def error(self, reqId, code, msg, advancedOrderRejectJson=''):
+    def error(self, reqId, code, msg, *args, **kwargs):
         ''' Called if an error occurs '''
         
         # Save tje ,essage
@@ -390,7 +397,7 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
     # If the historical minute data variable is a dataframe
     if isinstance(historical_minute_data, pd.DataFrame):
         try:
-            historical_resampled_data = pd.read_csv('data/'+historical_data_address, index_col=0)
+            historical_resampled_data = pd.read_csv(historical_data_address, index_col=0)
             historical_resampled_data.index = pd.to_datetime(historical_resampled_data.index)
             if (historical_minute_data.index[-1].day==historical_resampled_data.index[-1].day) or \
                 (historical_minute_data.index[-1].day+1==historical_resampled_data.index[-1].day):
@@ -419,7 +426,7 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
         historical_minute_data.index = pd.to_datetime(historical_minute_data.index)
 
         try:
-            historical_resampled_data = pd.read_csv('data/'+historical_data_address, index_col=0)
+            historical_resampled_data = pd.read_csv(historical_data_address, index_col=0)
             historical_resampled_data.index = pd.to_datetime(historical_resampled_data.index)
             if (historical_minute_data.index[-1].day==historical_resampled_data.index[-1].day) or \
                 (historical_minute_data.index[-1].day+1==historical_resampled_data.index[-1].day):
@@ -457,6 +464,17 @@ def run_hist_data_download_app(historical_minute_data, historical_data_address, 
     now = datetime(yearEnd,monthEnd,dayEnd,23,59,00)
     # Get the Saturdays list
     saturdays = tf.saturdays_list(now.date())
+
+    # Limit download to what the strategy actually needs: train_span bars + indicator warm-up
+    bars_per_day = tf.get_periods_per_day(data_frequency)
+    buffer_bars = 500  # warm-up for rolling indicators
+    needed_bars = int(train_span) + buffer_bars
+    needed_days = max(30, int(np.ceil(needed_bars / max(1, bars_per_day) * 1.5)))
+    cutoff_date = (now - timedelta(days=needed_days)).strftime('%Y%m%d-%H:%M:%S')
+    saturdays = [s for s in saturdays if s >= cutoff_date]
+    # Always keep at least the last 2 Saturdays so update mode has a source
+    if len(saturdays) < 2:
+        saturdays = tf.saturdays_list(now.date())[-2:]
     
     # Run the download app
     app_for_download_data('127.0.0.1', 0, historical_minute_data, update, contract, now, download_span, timezone, saturdays)

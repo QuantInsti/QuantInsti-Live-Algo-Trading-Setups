@@ -576,21 +576,23 @@ def update_submitted_orders(app):
             # Clear the temporary dataframe
             app.temp_exec_df = pd.DataFrame()
             
-            # Set the datetime as index
-            app.temp_comm_df.set_index('datetime',inplace=True)
-            # Erase the index name
-            app.temp_comm_df.index.name = ''
-            # Convert to NaN Realized PnL whose values are extremely high (due to IB mistake value)
-            mask = app.temp_comm_df['Realized PnL'].astype(float) == 1.7976931348623157e+308
-            app.temp_comm_df.loc[mask,'Realized PnL'] = np.nan
-            # Concatenate the temporary dataframe with the main dataframe
-            app.comm_df = pd.concat([app.comm_df,app.temp_comm_df])
-            # Drop duplicates
-            app.comm_df.drop_duplicates(inplace=True)
-            # Sor the dataframe by index
-            app.comm_df.sort_index(ascending=True, inplace=True)
-            # Clear the temporary dataframe
-            app.temp_comm_df = pd.DataFrame()
+            # If the temporary commissions dataframe is not empty
+            if (app.temp_comm_df.empty == False):
+                # Set the datetime as index
+                app.temp_comm_df.set_index('datetime',inplace=True)
+                # Erase the index name
+                app.temp_comm_df.index.name = ''
+                # Convert to NaN Realized PnL whose values are extremely high (due to IB mistake value)
+                mask = app.temp_comm_df['Realized PnL'].astype(float) == 1.7976931348623157e+308
+                app.temp_comm_df.loc[mask,'Realized PnL'] = np.nan
+                # Concatenate the temporary dataframe with the main dataframe
+                app.comm_df = pd.concat([app.comm_df,app.temp_comm_df])
+                # Drop duplicates
+                app.comm_df.drop_duplicates(inplace=True)
+                # Sor the dataframe by index
+                app.comm_df.sort_index(ascending=True, inplace=True)
+                # Clear the temporary dataframe
+                app.temp_comm_df = pd.DataFrame()
 
             
             # If the orders status and positions dataframes are not empty
@@ -1992,11 +1994,6 @@ def send_close_to_open_orders(app):
             else:
                 # This is the primary case for opening a new overnight position.
                 print('='*100)
-                # Print a debugging message.
-                print('hola1')
-                # Print the signal and leverage for debugging.
-                print(app.signal)
-                print(app.leverage)
                 # Send the market order to open the new overnight position.
                 send_orders_as_bracket(app, order_id, app.current_quantity, True, False, False)
                 # Print a confirmation.
@@ -2013,9 +2010,6 @@ def send_close_to_open_orders(app):
                 if app.current_quantity > app.previous_quantity:
                     # Print debugging messages.
                     print('='*100)
-                    print('hola2')
-                    print(app.signal)
-                    print(app.leverage)
                     # Calculate the quantity to add to the position.
                     final_quantity = (app.current_quantity - app.previous_quantity)
                     # Send a market order for the additional quantity.
@@ -2071,9 +2065,6 @@ def send_close_to_open_orders(app):
                 # This is the primary case for opening a new overnight position when leverage changes.
                 print('='*100)
                 # Print debugging messages.
-                print('hola3')
-                print(app.signal)
-                print(app.leverage)
                 # Send the market order to open the new position.
                 send_orders_as_bracket(app, order_id, app.current_quantity, True, False, False)
                 # Print a confirmation.
@@ -2561,6 +2552,15 @@ def update_and_close_positions(app):
         # For this type, download fresh historical data in preparation for the end-of-day signal.
         update_hist_data(app)
 
+    # Load the previous signal and leverage from the cash balance dataframe
+    # before they are zeroed, so they can be printed for debugging.
+    if len(app.cash_balance.loc[:, 'leverage'].index) != 0:
+        app.previous_leverage = app.cash_balance['leverage'].iloc[-1]
+        app.previous_signal = app.cash_balance['signal'].iloc[-1]
+    else:
+        app.previous_leverage = 0.0
+        app.previous_signal = 0.0
+
     # Set the target signal and leverage to zero, as the goal is to have a flat position.
     app.signal = app.leverage = 0
     
@@ -2568,6 +2568,18 @@ def update_and_close_positions(app):
     get_previous_and_current_quantities(app)
     # Explicitly set the target quantity to zero to ensure the position is closed.
     app.current_quantity = 0.0
+    
+    # Print the current trading state for debugging / visibility
+    print('='*50)
+    print('='*50)
+    print(f'previous quantity is {app.previous_quantity}')
+    print(f'previous signal is {app.previous_signal}')
+    print(f'signal is {app.signal}')
+    print(f'previous leverage is {app.previous_leverage}')
+    print(f'leverage is {app.leverage}')
+    print(f'current quantity is {app.signal*app.current_quantity}')
+    print('='*50)
+    print('='*50)
     
     # Check if the application is connected to the IBKR server.
     if app.isConnected():

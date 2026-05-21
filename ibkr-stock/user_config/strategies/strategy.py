@@ -7,6 +7,7 @@
 """
 
 # For data manipulation
+import os
 import pickle 
 import numpy as np
 import pandas as pd
@@ -562,6 +563,7 @@ def strategy_parameter_optimization(seed, data_frequency,
     base_df, final_input_features = prepare_base_df(df, train_span)
     
     # Save the final input features in case you're working with an ML-based strategy
+    os.makedirs('data/models', exist_ok=True)
     features_df = pd.DataFrame(data=final_input_features, columns=['final_features'], index=range(len(final_input_features)))
     features_df.to_excel('data/models/optimal_features_df.xlsx')
     

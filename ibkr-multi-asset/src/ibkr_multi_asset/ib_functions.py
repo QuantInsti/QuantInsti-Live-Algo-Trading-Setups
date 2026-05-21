@@ -8,9 +8,17 @@
 
 # Import the necessary libraries
 import datetime as dt
+from decimal import Decimal
 from ibapi.order import Order
 from ibapi.client import Contract
 from ibapi.execution import ExecutionFilter
+
+def _safe_qty(quantity):
+    """Convert a float quantity to Decimal to avoid scientific notation in IBKR wire format."""
+    try:
+        return Decimal(str(round(float(quantity), 8)))
+    except Exception:
+        return Decimal("0")
 
 def marketOrder(direction,quantity):
     ''' Function to set the market order object'''
@@ -21,7 +29,7 @@ def marketOrder(direction,quantity):
     # Set the order as a market one
     order.orderType = "MKT"
     # Set the quantity
-    order.totalQuantity = quantity
+    order.totalQuantity = _safe_qty(quantity)
     # Transmit the order
     order.transmit = True
     # Trade with electronic quotes
@@ -36,7 +44,7 @@ def cryptoMarketOrder(direction, quantity=None, cash_quantity=None, override=Fal
     order.orderType = "MKT"
     order.tif = "IOC"
     if quantity is not None:
-        order.totalQuantity = quantity
+        order.totalQuantity = _safe_qty(quantity)
     if cash_quantity is not None:
         order.cashQty = cash_quantity
     order.transmit = True
@@ -51,7 +59,7 @@ def cryptoLimitOrder(direction, quantity, lmt_price, override=False):
     order.action = direction
     order.orderType = "LMT"
     order.tif = "IOC"
-    order.totalQuantity = quantity
+    order.totalQuantity = _safe_qty(quantity)
     order.lmtPrice = lmt_price
     order.transmit = True
     order.eTradeOnly = 0
@@ -67,7 +75,7 @@ def stopOrder(direction,quantity,st_price,trail,override=False):
     # Set the direction of the stop loss order: Buy or Sell
     order.action = direction
     # Set the quantity
-    order.totalQuantity = quantity
+    order.totalQuantity = _safe_qty(quantity)
     order.tif = "DAY"
     # Transmit the order
     order.transmit = True
@@ -100,7 +108,7 @@ def tpOrder(direction,quantity,tp_price,override=False):
     # Set the order as a limit order
     order.orderType = "LMT"
     # Set the quantity
-    order.totalQuantity = quantity
+    order.totalQuantity = _safe_qty(quantity)
     order.tif = "DAY"
     # Transmit the order
     order.transmit = True

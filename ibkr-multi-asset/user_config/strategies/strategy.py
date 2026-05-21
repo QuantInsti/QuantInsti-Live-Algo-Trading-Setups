@@ -106,7 +106,22 @@ def get_asset_runtime_policy(symbol, asset_class=None) -> dict:
     }
 
 
+# Per-asset trading frequency override. Symbols not listed here fall back to strategy_frequency.
+_ASSET_FREQUENCY_MAP = {
+    "EURUSD": "5min",
+    "USDJPY": "5min",
+    "MES": "10min",
+    "XAUUSD": "15min",
+    "ETH": "20min",
+    "BTC": "20min",
+}
+
+
 def get_asset_frequency(symbol) -> str:
+    """Return the trading bar frequency for *symbol*, respecting per-asset overrides."""
+    mapped = _ASSET_FREQUENCY_MAP.get(str(symbol).upper())
+    if mapped:
+        return mapped
     return _strategy_frequency()
 
 
@@ -245,6 +260,9 @@ def _compute_atr(frame: pd.DataFrame, window: int) -> pd.Series:
     return true_range.rolling(max(2, int(window)), min_periods=1).mean()
 
 
+# Module-level CSV cache: only re-read from disk when the file's mtime changes.
+_SYMBOL_HISTORY_CACHE = {}
+
 def _load_symbol_history(symbol: str, fallback: pd.DataFrame | None = None) -> pd.DataFrame:
     filename = f"historical_{str(symbol).upper()}.csv"
     candidate_paths = [
@@ -255,9 +273,17 @@ def _load_symbol_history(symbol: str, fallback: pd.DataFrame | None = None) -> p
     ]
     for history_path in candidate_paths:
         if history_path.exists():
+            try:
+                mtime = history_path.stat().st_mtime
+            except OSError:
+                mtime = None
+            cached = _SYMBOL_HISTORY_CACHE.get(symbol)
+            if cached is not None and cached[0] == mtime and cached[1] is not None:
+                return cached[1].copy()
             df = pd.read_csv(history_path, index_col=0)
             normalized = _normalize_history_frame(df)
             if not normalized.empty:
+                _SYMBOL_HISTORY_CACHE[symbol] = (mtime, normalized.copy())
                 return normalized
     if fallback is not None:
         normalized = _normalize_history_frame(fallback.copy())
@@ -446,8 +472,8 @@ def _kelly_leverage(portfolio_returns: pd.Series) -> float:
     variance = float(returns.var(ddof=0))
     if variance <= 0 or not np.isfinite(variance):
         return 1.0
-    raw_kelly = max(0.0, mean_return / variance)
-    return float(min(_fixed_max_leverage(), raw_kelly))
+    raw_kelly = max(0.25, mean_return / variance)  # floor so there's always some leverage
+    return float(min(_fixed_max_leverage(), max(0.0, raw_kelly)))
 
 
 def _portfolio_validation_returns(weights: dict, validation_returns: Dict[str, pd.Series]) -> pd.Series:
@@ -581,10 +607,7 @@ def _live_target(symbol: str, frame: pd.DataFrame, params: dict, portfolio_weigh
 
     position = _trend_position_series(frame, params)
     signal = int(np.sign(float(position.iloc[-1]))) if not position.empty else 0
-    if signal == 0:
-        weight = 0.0
-    else:
-        weight = max(0.0, float(portfolio_weight))
+    weight = max(0.0, float(portfolio_weight))  # always carry weight; engine zeros qty when signal=0
 
     close = float(frame["close"].iloc[-1])
     atr = float(frame["atr"].iloc[-1]) if "atr" in frame.columns and np.isfinite(frame["atr"].iloc[-1]) else max(close * 0.003, 1e-8)
@@ -695,6 +718,41 @@ def get_signal(app, fx_pairs=None, futures_symbols=None, metals_symbols=None, cr
     app.strategy_state_updates = state_updates
     return {"targets": targets, "state_updates": state_updates}
 
+
+def refresh_symbol_signal(app):
+    """Called per-symbol at each trading bar with fresh app.historical_data.
+    Recomputes signal + stop/take-profit from latest bars without any CSV I/O."""
+    symbol = str(getattr(app, "ticker", "")).upper()
+    hist = getattr(app, "historical_data", None)
+    if hist is None or hist.empty:
+        return
+    frame = _prepare_symbol_frame(symbol, hist.tail(_get_train_span() + 200).copy())
+    if frame.empty:
+        return
+    pos = _trend_position_series(frame)
+    new_signal = int(np.sign(float(pos.iloc[-1]))) if not pos.empty else 0
+    app.signal = new_signal
+    tg = getattr(app, "strategy_targets", {}) or {}
+    if symbol not in tg:
+        return
+    tg[symbol]["signal"] = new_signal
+    # Carry portfolio weight from target_weights when signal flips 0→1
+    tw_dict = getattr(app, "target_weights", {}) or {}
+    if new_signal != 0 and bool(tw_dict) and symbol in tw_dict:
+        tg[symbol]["target_weight"] = max(0.0, float(tw_dict.get(symbol, 0.0)))
+    close = float(frame["close"].iloc[-1])
+    atr_val = float(frame["atr"].iloc[-1]) if "atr" in frame.columns and np.isfinite(frame["atr"].iloc[-1]) else max(close * 0.003, 1e-8)
+    stop_mult = float(DEFAULT_GLOBAL_PARAMS.get("stop_multiple", 2.0))
+    if new_signal > 0:
+        tg[symbol]["stop_price"] = float(close - stop_mult * atr_val)
+        tg[symbol]["take_profit_price"] = float(close + 2 * stop_mult * atr_val)
+    elif new_signal < 0:
+        tg[symbol]["stop_price"] = float(close + stop_mult * atr_val)
+        tg[symbol]["take_profit_price"] = float(close - 2 * stop_mult * atr_val)
+    else:
+        tg[symbol]["stop_price"] = np.nan
+        tg[symbol]["take_profit_price"] = np.nan
+    app.strategy_targets = tg
 
 def set_stop_loss_price(app):
     targets = getattr(app, "strategy_targets", {}) or {}

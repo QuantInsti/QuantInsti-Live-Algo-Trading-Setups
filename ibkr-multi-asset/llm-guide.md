@@ -202,7 +202,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | **Position sizing** | "Do you cap position size per asset? Is there a maximum allocation per symbol?" |
 | **Regime/volatility** | "Does your strategy reduce exposure in high-volatility regimes? If so, what threshold?" |
 
-**Format for LLM questions:** The LLM should batch related questions together (2-4 at a time) rather than asking one at a time. After receiving answers, the LLM should confirm: "I now have enough to generate all 9 functions. Shall I proceed?"
+**Format for LLM questions:** The LLM should batch related questions together (2-4 at a time) rather than asking one at a time. After receiving answers, the LLM should confirm: "I now have enough to generate all 10 functions. Shall I proceed?"
 
 **If the user says "I don't have that / I don't know":**
 
@@ -215,7 +215,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 
 ## What the engine expects from your strategy file
 
-The setup engine calls these 9 functions. Every one must exist with the exact signature shown below. The engine imports your file as `stra` and calls:
+The setup engine calls these 10 functions. Every one must exist with the exact signature shown below. The engine imports your file as `stra` and calls:
 
 - `stra.get_asset_runtime_policy(symbol, asset_class)` :  per-asset session rules
 - `stra.get_asset_frequency(symbol)` :  bar frequency string
@@ -224,6 +224,7 @@ The setup engine calls these 9 functions. Every one must exist with the exact si
 - `stra.strategy_parameter_optimization(symbol_specs, ...)` :  parameter search, returns config payload
 - `stra.validate_strategy_optimization(symbol_specs, ...)` :  validates existing config
 - `stra.get_signal(app, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols, leverage)` :  live signals
+- `stra.refresh_symbol_signal(app)` :  per-bar per-symbol signal refresh (called at each asset's trading bar)
 - `stra.set_stop_loss_price(app)` :  per-bar stop price
 - `stra.set_take_profit_price(app)` :  per-bar take-profit price
 
@@ -433,7 +434,61 @@ return {
 
 ---
 
-### 8. `set_stop_loss_price`
+### 8. `refresh_symbol_signal`
+
+```python
+def refresh_symbol_signal(app):
+```
+
+**Purpose:** Called per-symbol at each asset's trading bar, right before orders are sent. `app.historical_data` already contains the freshly-refreshed OHLC data for this symbol. Recompute the signal and update stop/take-profit prices from the latest bars.
+
+**What to do:**
+1. Read `app.historical_data` (already fresh; no CSV I/O needed)
+2. Run your feature computation (`_prepare_symbol_frame` / `_prep`)
+3. Compute the position signal from the latest bar
+4. Set `app.signal` to the new signal
+5. Update `app.strategy_targets[symbol]` with the fresh signal, stop, and take-profit prices
+
+**Implementation (reference):**
+
+```python
+def refresh_symbol_signal(app):
+    symbol = str(getattr(app, "ticker", "")).upper()
+    hist = getattr(app, "historical_data", None)
+    if hist is None or hist.empty:
+        return
+    payload = _load_optimized_params()
+    asset_params = payload.get("asset_params", {}) if payload else {}
+    params = asset_params.get(symbol, _asset_defaults(symbol))
+    frame = _prepare_symbol_frame(hist.tail(int(_strategy_train_span()) + 200).copy(), symbol, params)
+    if frame.empty:
+        return
+    position = _trend_position_series(frame, params)
+    new_signal = int(np.sign(float(position.iloc[-1]))) if not position.empty else 0
+    app.signal = new_signal
+    targets = getattr(app, "strategy_targets", {}) or {}
+    if symbol not in targets:
+        return
+    targets[symbol]["signal"] = new_signal
+    close = float(frame["close"].iloc[-1])
+    atr_val = float(frame["atr"].iloc[-1]) if "atr" in frame.columns and np.isfinite(frame["atr"].iloc[-1]) else max(close * 0.003, 1e-8)
+    sm = float(DEFAULT_GLOBAL_PARAMS.get("stop_atr_multiple", 2.0))
+    tm = float(DEFAULT_GLOBAL_PARAMS.get("take_profit_atr_multiple", 3.0))
+    if new_signal > 0:
+        targets[symbol]["stop_price"] = float(close - sm * atr_val)
+        targets[symbol]["take_profit_price"] = float(close + tm * atr_val)
+    elif new_signal < 0:
+        targets[symbol]["stop_price"] = float(close + sm * atr_val)
+        targets[symbol]["take_profit_price"] = float(close - tm * atr_val)
+    else:
+        targets[symbol]["stop_price"] = np.nan
+        targets[symbol]["take_profit_price"] = np.nan
+    app.strategy_targets = targets
+```
+
+---
+
+### 9. `set_stop_loss_price`
 
 ```python
 def set_stop_loss_price(app):
@@ -443,7 +498,7 @@ def set_stop_loss_price(app):
 
 ---
 
-### 9. `set_take_profit_price`
+### 10. `set_take_profit_price`
 
 ```python
 def set_take_profit_price(app):
@@ -588,6 +643,9 @@ def _compute_atr(frame, window):
     return true_range.rolling(max(2, int(window)), min_periods=1).mean()
 
 
+# Module-level cache that avoids re-reading CSVs that haven't changed since the last bar.
+_SYMBOL_HISTORY_CACHE = {}
+
 def _load_symbol_history(symbol, fallback=None):
     filename = f"historical_{str(symbol).upper()}.csv"
     candidate_paths = [
@@ -598,9 +656,18 @@ def _load_symbol_history(symbol, fallback=None):
     ]
     for history_path in candidate_paths:
         if history_path.exists():
+            try:
+                mtime = history_path.stat().st_mtime
+            except OSError:
+                mtime = None
+            cached = _SYMBOL_HISTORY_CACHE.get(symbol)
+            if cached is not None and cached[0] == mtime and cached[1] is not None:
+                return cached[1].copy()
             df = pd.read_csv(history_path, index_col=0)
             normalized = _normalize_history_frame(df)
-            if not normalized.empty: return normalized
+            if not normalized.empty:
+                _SYMBOL_HISTORY_CACHE[symbol] = (mtime, normalized.copy())
+                return normalized
     if fallback is not None:
         normalized = _normalize_history_frame(fallback.copy())
         if not normalized.empty: return normalized
@@ -925,7 +992,7 @@ Your strategy can read ALL of these via `_main_variables()`. Use only what you n
 ## Portability rules
 
 1. **Do NOT modify engine source files.** Only create/modify files under `user_config/`.
-2. **All 9 functions must exist** with the exact signatures documented above.
+2. **All 10 functions must exist** with the exact signatures documented above.
 3. **Internal logic is free.** Change signal generation, portfolio weighting, parameter optimization :  anything inside the function body. Just keep the signatures.
 4. **Data paths use `Path(__file__).resolve().parents[1]`** :  not hardcoded absolute paths.
 5. **Optimization manifest** must be saved to `data/models/` inside the `user_config` directory.
@@ -969,7 +1036,8 @@ A single `my_strategy.py` file containing (in order):
 17. `strategy_parameter_optimization` (skeleton provided in section 5)
 18. `validate_strategy_optimization` (skeleton provided in section 6)
 19. `get_signal` (skeleton provided in section 7)
-20. `set_stop_loss_price`, `set_take_profit_price` (full code provided above)
+20. `refresh_symbol_signal` (boilerplate provided in section 8)
+21. `set_stop_loss_price`, `set_take_profit_price` (full code provided above)
 
 The file should be self-contained (no imports from `strategy.py` or other user files) and ~600-900 lines.
 
@@ -1062,8 +1130,9 @@ Every bar, the engine executes this sequence. Knowing the order matters if your 
 5. sf.collect_shared_broker_snapshot()     ← Gets current positions, open orders, executions
 6. For each symbol:
    ├─ _apply_portfolio_target_attrs(app)  ← Copies weights/leverage from step 3
-   ├─ stra.set_stop_loss_price(app)       ← YOUR FUNCTION: return stop price
-   ├─ stra.set_take_profit_price(app)     ← YOUR FUNCTION: return take-profit price
+   ├─ stra.refresh_symbol_signal(app)      ← YOUR FUNCTION: fresh signal + stops from latest bar
+   ├─ stra.set_stop_loss_price(app)       ← YOUR FUNCTION: return stop price (fallback)
+   ├─ stra.set_take_profit_price(app)     ← YOUR FUNCTION: return take-profit price (fallback)
    └─ sf.send_orders(app)                 ← Size and submit orders to IBKR
 7. sf.collect_shared_broker_snapshot()     ← Post-trade verification
 8. Synthetic stop monitor sweep            ← Polls crypto prices against stop prices (PAXOS has no native STP)
@@ -1178,7 +1247,7 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 | Error | Likely cause | LLM should ask |
 |---|---|---|
 | `ModuleNotFoundError: No module named 'my_strategy'` | File not in `strategies/` folder or `main.py` points to wrong path | "Is `my_strategy.py` in `user_config/strategies/`? Does `main.py` have `strategy_file = 'strategies/my_strategy.py'`?" |
-| `AttributeError: module 'my_strategy' has no attribute 'get_signal'` | Missing function or wrong function name | "Does your file define all 9 required functions? Check for typos in function names." |
+| `AttributeError: module 'my_strategy' has no attribute 'get_signal'` | Missing function or wrong function name | "Does your file define all 10 required functions? Check for typos in function names." |
 | `TypeError: get_signal() missing X required positional arguments` | Function signature doesn't match | "Compare your `get_signal` signature with the one in the guide. It must accept all parameters even if you don't use them." |
 | `KeyError: 'trend_spread'` or `KeyError: 'close'` | Column not found in DataFrame :  missing feature or normalization failed | "What columns does your `_prepare_symbol_frame` produce? Is `_normalize_ohlc` returning the standard `open, high, low, close` columns?" |
 | `ValueError: Strategy manifest incomplete` | Optimization manifest missing per-asset params or weights | "Does your `strategy_parameter_optimization` store params for every symbol in the universe? Check the `asset_params` and weights dicts." |
@@ -1191,7 +1260,7 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 ### Debugging workflow the LLM should follow
 
 1. **Read the error:** ask the user to share the full traceback.
-2. **Identify the function:** which of the 9 functions raised the error?
+2. **Identify the function:** which of the 10 functions raised the error?
 3. **Check the function's contract:** compare against the guide's signature and return shape.
 4. **Isolate:** ask the user to run a minimal test importing just `my_strategy` and calling one function.
 5. **Fix or rebuild:** apply the fix to the strategy file. If the error is in the engine (not the strategy), see next section.

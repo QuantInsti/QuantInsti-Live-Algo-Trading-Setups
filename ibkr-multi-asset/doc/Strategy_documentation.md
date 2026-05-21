@@ -4,7 +4,7 @@ Licensed under the QuantInsti Open License (QOL) v1.1.
 
 ## Overview
 
-The bundled default strategy module is [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py).
+The bundled default strategy module is [strategy.py](user_config/strategies/strategy.py).
 
 It implements:
 
@@ -154,4 +154,4 @@ Examples:
 - whole-unit XAUUSD behavior
 - futures minimum contract size
 
-These should be discovered first through [broker_constraint_report.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/broker_constraint_report.py) and then incorporated into backtest assumptions and, later, live sizing rules.
+These should be discovered first through [broker_constraint_report.py](user_config/broker_constraint_report.py) and then incorporated into backtest assumptions and, later, live sizing rules.

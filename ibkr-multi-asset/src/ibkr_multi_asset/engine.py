@@ -19,6 +19,10 @@ import numpy as np
 import pandas as pd
 
 from ibkr_multi_asset import ib_functions as ibf
+# Module-level cache for portfolio allocation targets (strategy-agnostic)
+_last_allocation_targets = {}
+_last_allocation_attrs = {}
+
 from ibkr_multi_asset import setup_functions as sf
 from ibkr_multi_asset import trading_functions as tf
 from ibkr_multi_asset.create_database import ensure_trading_info_workbook
@@ -42,6 +46,19 @@ CONNECT_HANDSHAKE_TIMEOUT_SECONDS = 45
 
 def _main_config_path():
     return os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "user_config", "main.py")
+
+
+# Cached path to user_config/ for functions that need to read main.py
+_USER_CONFIG_DIR = os.path.dirname(_main_config_path())
+
+
+def _extract_main_variable(name, default=None):
+    """Read a single variable from user_config/main.py with a fallback."""
+    try:
+        variables = tf.extract_variables(_main_config_path())
+        return variables.get(name, default)
+    except Exception:
+        return default
 
 
 def _is_within_portfolio_trading_week(now_dt, market_open_time, market_close_time):
@@ -181,9 +198,11 @@ def _configure_portfolio_app_for_symbol(app, symbol_spec, metadata, current_peri
     app.resolved_contract = None
     app.historical_data = _load_symbol_history_for_app(app, metadata)
     app.base_df = pd.DataFrame()
-    app.new_df = {"0": pd.DataFrame(), "1": pd.DataFrame()}
+    if not getattr(app, 'new_df', None):
+        app.new_df = {}
+    app.hist_data_events = getattr(app, 'hist_data_events', {}) or {}
+    app.hist_request_errors = getattr(app, 'hist_request_errors', {}) or {}
     app.errors_dict = {}
-    app.hist_request_errors = {}
     app.bid_price = np.nan
     app.ask_price = np.nan
     app.last_trade_price = np.nan
@@ -323,6 +342,7 @@ def _run_parallel_worker_send_orders(app):
 
 
 def _run_parallel_app_portfolio_cycle(apps, tradable_symbol_specs, metadata_by_symbol, current_period, previous_period, next_period, market_open_time, market_close_time, previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, leverage, strict_targets_validation, allowed_symbols):
+    global _last_allocation_targets, _last_allocation_attrs
     active_apps = [app for app in apps if app is not None and app.isConnected()]
     if len(active_apps) == 0:
         return False
@@ -339,9 +359,22 @@ def _run_parallel_app_portfolio_cycle(apps, tradable_symbol_specs, metadata_by_s
     sf.collect_shared_account_snapshot([lead_app])
     _broadcast_shared_account_state(lead_app, active_apps)
 
-    print("Computing portfolio targets once for the full universe...")
-    targets = sf.compute_portfolio_targets_once(active_apps)
-    portfolio_attrs = _copy_portfolio_target_attrs(lead_app)
+    if _is_portfolio_allocation_bar(current_period):
+        print("Computing portfolio targets once for the full universe...")
+        targets = sf.compute_portfolio_targets_once(active_apps)
+        portfolio_attrs = _copy_portfolio_target_attrs(lead_app)
+        _last_allocation_targets = dict(targets) if isinstance(targets, dict) else {}
+        _last_allocation_attrs = dict(portfolio_attrs) if isinstance(portfolio_attrs, dict) else {}
+    else:
+        if _last_allocation_targets:
+            targets = _last_allocation_targets
+            portfolio_attrs = _last_allocation_attrs
+        else:
+            print("Computing portfolio targets once for the full universe (first cycle)...")
+            targets = sf.compute_portfolio_targets_once(active_apps)
+            portfolio_attrs = _copy_portfolio_target_attrs(lead_app)
+            _last_allocation_targets = dict(targets) if isinstance(targets, dict) else {}
+            _last_allocation_attrs = dict(portfolio_attrs) if isinstance(portfolio_attrs, dict) else {}
 
     print("Resolving contract details once for the full universe...")
     sf.collect_shared_contract_details(lead_app, tradable_symbol_specs)
@@ -356,11 +389,44 @@ def _run_parallel_app_portfolio_cycle(apps, tradable_symbol_specs, metadata_by_s
         symbol = str(app.ticker).upper()
         target = targets.get(symbol, {"signal": 0}) if isinstance(targets, dict) else {"signal": 0}
         app.signal = int(np.sign(float(target.get("signal", 0.0))))
+        # Per-asset trading gate + refresh: only trade at this asset's bar frequency
+        if not _is_asset_trading_bar(symbol, current_period):
+            app.trading_status = "SKIPPED"
+            continue
+        # Refresh per-symbol signal from latest data
+        try:
+            stra.refresh_symbol_signal(app)
+        except (AttributeError, Exception):
+            pass
+        app.trading_status = "TRADING"
 
+    trading_apps = [app for app in active_apps if getattr(app, 'trading_status', '') == "TRADING"]
+    if not trading_apps:
+        print("No assets are at their trading bar this cycle. Skipping order submission.")
+        print("Portfolio order summary...")
+        sf.print_portfolio_order_summary(active_apps)
+        for app in active_apps:
+            app.strategy_end = True
+        print("Saving the data and sending the email...")
+        sf.save_portfolio_cycle_data(active_apps, send_email_summary=True)
+        return True
+
+    # Shared capital enforcement: respect strategy's cash_weight (strategy-agnostic)
+    cash_weight = float(getattr(lead_app, 'cash_weight', 0.0))
+    if cash_weight > 0 and trading_apps:
+        max_deployed = 1.0 - cash_weight
+        total_weight = sum(
+            float(getattr(a, 'target_weights', {}).get(str(getattr(a, 'ticker', '')).upper(), 0.0))
+            for a in trading_apps
+        )
+        if total_weight > max_deployed and max_deployed > 0:
+            scale = max_deployed / total_weight
+            for a in trading_apps:
+                a.leverage = float(a.leverage) * scale
     print("Preparing and sending orders in parallel with isolated IB apps...")
     cycle_errors = []
-    with ThreadPoolExecutor(max_workers=len(active_apps)) as executor:
-        futures = {executor.submit(_run_parallel_worker_send_orders, app): app for app in active_apps}
+    with ThreadPoolExecutor(max_workers=len(trading_apps)) as executor:
+        futures = {executor.submit(_run_parallel_worker_send_orders, app): app for app in trading_apps}
         for future, app in futures.items():
             try:
                 future.result()
@@ -507,10 +573,13 @@ def _run_deferred_synthetic_monitor_phase(app, tradable_symbol_specs, metadata_b
 
 
 def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symbol, current_period, previous_period, next_period, market_open_time, market_close_time, previous_day_start_datetime, trading_day_end_datetime, day_end_datetime, leverage, strict_targets_validation, allowed_symbols):
+    global _last_allocation_targets, _last_allocation_attrs
     if app is None or not app.isConnected() or len(tradable_symbol_specs) == 0:
         return False
 
     print("Refreshing all symbols before portfolio decisioning with one connected app...")
+    # Capture each symbol's freshly-updated historical data before the loop overwrites it.
+    _portfolio_symbol_histories = {}
     for symbol_spec in tradable_symbol_specs:
         metadata = metadata_by_symbol[str(symbol_spec["symbol"]).upper()]
         _configure_portfolio_app_for_symbol(
@@ -530,30 +599,55 @@ def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symb
             allowed_symbols,
         )
         sf.refresh_symbol_market_data(app)
+        _portfolio_symbol_histories[str(symbol_spec["symbol"]).upper()] = app.historical_data.copy()
+    app._portfolio_symbol_histories = _portfolio_symbol_histories
 
     print("Collecting shared account updates once for the full universe...")
     sf.collect_shared_account_snapshot([app])
 
-    print("Computing portfolio targets once for the full universe...")
-    first_spec = tradable_symbol_specs[0]
-    _configure_portfolio_app_for_symbol(
-        app,
-        first_spec,
-        metadata_by_symbol[str(first_spec["symbol"]).upper()],
-        current_period,
-        previous_period,
-        next_period,
-        market_open_time,
-        market_close_time,
-        previous_day_start_datetime,
-        trading_day_end_datetime,
-        day_end_datetime,
-        leverage,
-        strict_targets_validation,
-        allowed_symbols,
-    )
-    targets = sf.compute_portfolio_targets_once([app])
-    portfolio_attrs = _copy_portfolio_target_attrs(app)
+    # Portfolio allocation: only at daily origin bar (once per trading day).
+    # The strategy internally caches heavy portfolio weights; per-symbol signals are
+    # set here once and orders are gated per-asset by _is_asset_trading_bar below.
+    if _is_portfolio_allocation_bar(current_period):
+        print("Computing portfolio targets once for the full universe...")
+        first_spec = tradable_symbol_specs[0]
+        _configure_portfolio_app_for_symbol(
+            app, first_spec,
+            metadata_by_symbol[str(first_spec["symbol"]).upper()],
+            current_period, previous_period, next_period,
+            market_open_time, market_close_time,
+            previous_day_start_datetime, trading_day_end_datetime, day_end_datetime,
+            leverage, strict_targets_validation, allowed_symbols,
+        )
+        targets = sf.compute_portfolio_targets_once([app])
+        portfolio_attrs = _copy_portfolio_target_attrs(app)
+        _last_allocation_targets = dict(targets) if isinstance(targets, dict) else {}
+        _last_allocation_attrs = dict(portfolio_attrs) if isinstance(portfolio_attrs, dict) else {}
+    elif _last_allocation_targets:
+        app.logging.info(f"[{app.ticker}] Not a portfolio allocation bar. Reusing previous targets.")
+        targets = _last_allocation_targets
+        portfolio_attrs = _last_allocation_attrs
+        for attr_name, attr_val in _last_allocation_attrs.items():
+            if hasattr(app, attr_name) and attr_val is not None:
+                try:
+                    setattr(app, attr_name, attr_val)
+                except Exception:
+                    pass
+    else:
+        print("Computing portfolio targets once for the full universe (first cycle)...")
+        first_spec = tradable_symbol_specs[0]
+        _configure_portfolio_app_for_symbol(
+            app, first_spec,
+            metadata_by_symbol[str(first_spec["symbol"]).upper()],
+            current_period, previous_period, next_period,
+            market_open_time, market_close_time,
+            previous_day_start_datetime, trading_day_end_datetime, day_end_datetime,
+            leverage, strict_targets_validation, allowed_symbols,
+        )
+        targets = sf.compute_portfolio_targets_once([app])
+        portfolio_attrs = _copy_portfolio_target_attrs(app)
+        _last_allocation_targets = dict(targets) if isinstance(targets, dict) else {}
+        _last_allocation_attrs = dict(portfolio_attrs) if isinstance(portfolio_attrs, dict) else {}
 
     print("Resolving contract details once for the full universe...")
     sf.collect_shared_contract_details(app, tradable_symbol_specs)
@@ -565,8 +659,17 @@ def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symb
     app.defer_posttrade_sync = True
     app.defer_synthetic_monitors = True
     app.pending_synthetic_monitors = []
+    # Shared capital enforcement: respect strategy's cash_weight (strategy-agnostic)
+    _enforce_shared_capital = float(getattr(app, 'cash_weight', 0.0))
+    if _enforce_shared_capital > 0:
+        _max_deployed = 1.0 - _enforce_shared_capital
+        _tw = sum(float(app.target_weights.get(str(s["symbol"]).upper(), 0.0)) for s in tradable_symbol_specs)
+        _capital_scale = min(1.0, _max_deployed / max(_tw, 1e-8)) if _tw > _max_deployed else 1.0
+    else:
+        _capital_scale = 1.0
     rows = []
     cycle_errors = []
+    print("=" * 50)
     for symbol_spec in tradable_symbol_specs:
         symbol = str(symbol_spec["symbol"]).upper()
         metadata = metadata_by_symbol[symbol]
@@ -590,6 +693,31 @@ def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symb
         target = targets.get(symbol, {"signal": 0}) if isinstance(targets, dict) else {"signal": 0}
         app.signal = int(np.sign(float(target.get("signal", 0.0))))
         app.use_shared_pretrade_snapshot = True
+        
+        # Per-asset trading gate: only submit orders when bar aligns with asset frequency
+        if not _is_asset_trading_bar(symbol, current_period):
+            print(f"[{symbol}] SKIPPED: not this asset's trading bar")
+            app.trading_status = "SKIPPED"
+            rows.append([
+                symbol,
+                "SKIPPED",
+                str(int(getattr(app, "signal", 0))),
+                f"{float(getattr(app, 'leverage', 0.0)):.6f}",
+                "0.000000",
+            ])
+            continue
+        
+        # Refresh per-symbol signal from latest data (matches backtest per-bar logic)
+        try:
+            stra.refresh_symbol_signal(app)
+        except (AttributeError, Exception):
+            pass
+
+        app.trading_status = "TRADING"
+        print(f"[{symbol}] TRADING: sending orders for this bar")
+        # Apply shared capital scale if cash_weight is enforced
+        if _capital_scale < 1.0:
+            app.leverage = float(app.leverage) * _capital_scale
         try:
             sf.send_orders(app)
         except Exception as exc:
@@ -600,10 +728,12 @@ def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symb
             cycle_errors.append(msg)
         rows.append([
             symbol,
+            "TRADING",
             str(int(getattr(app, "signal", 0))),
             f"{float(getattr(app, 'leverage', 0.0)):.6f}",
             f"{float(getattr(app, 'ordered_quantity', 0.0)):.6f}",
         ])
+    print("=" * 50)
 
     print("Collecting shared post-trade positions, open orders, and executions once for the full universe...")
     sf.collect_shared_broker_snapshot(app)
@@ -643,7 +773,7 @@ def _run_single_app_portfolio_cycle(app, tradable_symbol_specs, metadata_by_symb
 
 
 def _print_portfolio_order_summary_rows(rows):
-    headers = ["Asset", "Signal", "Leverage", "OrderedQty"]
+    headers = ["Asset", "Status", "Signal", "Leverage", "OrderedQty"]
     widths = [len(header) for header in headers]
     for row in rows:
         for idx, value in enumerate(row):
@@ -655,17 +785,72 @@ def _print_portfolio_order_summary_rows(rows):
 
 
 def _resolve_engine_cycle_frequency(symbol_specs):
-    frequencies = [stra.get_asset_frequency(s["symbol"]) for s in symbol_specs]
-    if not frequencies:
-        return "5min"
-    # Take the minimum frequency in seconds
-    freq_seconds = [tf.get_data_frequency_values(f)[0] for f in frequencies]
-    min_seconds = min(freq_seconds)
-    # Convert back to string representation
-    for f in frequencies:
-        if tf.get_data_frequency_values(f)[0] == min_seconds:
-            return f
+    """Return the strategy_frequency from main.py (engine cycles at this pace).
+    Order submission is gated per-symbol by _is_asset_trading_bar below."""
+    try:
+        import importlib, strategies as _stra_mod
+        stra_name = str(_extract_main_variable("strategy_file", "")).strip()
+        if stra_name:
+            mod_name = stra_name.replace("/", ".").replace("\\", ".").removesuffix(".py")
+            if mod_name.startswith("strategies."):
+                mod_name = mod_name[len("strategies."):]
+            stra = importlib.import_module(mod_name)
+            freq = stra.get_asset_frequency("MES")
+            if freq:
+                return str(freq)
+    except Exception:
+        pass
     return "5min"
+
+
+def _is_asset_trading_bar(symbol, current_period_dt):
+    """Check if current_period aligns with this asset's trading frequency.
+    Sub-hour frequencies (5min, 10min, etc.) always trade.
+    Hour/daily frequencies trade only at aligned bars from trading_day_origin.
+    
+    Returns True if orders should be submitted for this symbol at this bar."""
+    freq = stra.get_asset_frequency(symbol)
+    freq_val, freq_unit = tf.get_data_frequency_values(freq)
+    
+    # Convert to minutes for alignment check
+    if freq_unit == 'D':
+        freq_minutes = freq_val * 24 * 60
+    elif freq_unit == 'h':
+        freq_minutes = freq_val * 60
+    else:  # min or sub-minute
+        freq_minutes = freq_val
+    
+    # Resolve trading_day_origin for alignment
+    try:
+        origin_str = str(_extract_main_variable("trading_day_origin", "18:00")).strip()
+        parts = origin_str.split(":")
+        origin_hour, origin_minute = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        origin_hour, origin_minute = 18, 0
+    
+    period_minutes = current_period_dt.hour * 60 + current_period_dt.minute
+    origin_minutes = origin_hour * 60 + origin_minute
+    delta_minutes = (period_minutes - origin_minutes) % (24 * 60)
+    
+    return delta_minutes % freq_minutes == 0
+
+
+
+def _is_portfolio_allocation_bar(current_period_dt):
+    """Portfolio allocation only at the daily trading_day_origin bar.
+    Between origin bars, reuse previous targets (strategy-agnostic gate)."""
+    try:
+        origin_str = str(_extract_main_variable("trading_day_origin", "18:00")).strip()
+        parts = origin_str.split(":")
+        origin_hour, origin_minute = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+    except Exception:
+        origin_hour, origin_minute = 18, 0
+    period_minutes = current_period_dt.hour * 60 + current_period_dt.minute
+    origin_minutes = origin_hour * 60 + origin_minute
+    return period_minutes == origin_minutes
+
+# NOTE: Duplicate _is_asset_trading_bar removed (used incorrect freq_seconds extraction).
+# The correct implementation above is the active one.
 
 
 def _in_carry_protection_window(now_dt, market_reopen_dt, window_end_dt):
@@ -754,10 +939,8 @@ def _run_carry_protection_refresh(host, port, account, client_id, timezone, acco
 def _ensure_history_file(path, current_period):
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Create a skeleton history file if it doesn't exist
         df = pd.DataFrame(columns=['open', 'high', 'low', 'close'])
         df.index.name = 'datetime'
-        # Set a dummy index to avoid empty-dataframe errors in some tf functions
         df.loc[pd.Timestamp(current_period) - dt.timedelta(days=1), :] = [0,0,0,0]
         df.to_csv(path)
 
@@ -826,6 +1009,50 @@ def _optimization_bucket_start(previous_day_start_datetime, optimization_frequen
     if frequency == "weekly":
         bucket_start = bucket_start - dt.timedelta(days=bucket_start.weekday())
     return bucket_start
+
+
+def _bulk_download_historical_data(symbol_specs, data_dir, timezone, variables):
+    """Download bulk historical data from IB for symbols whose CSV files have fewer
+    than 200 rows.  Resampled OHLC is saved to data/historical/historical_{symbol}.csv."""
+    from ibkr_multi_asset import setup_for_download_data as sdd
+    trading_day_origin = str(variables.get("trading_day_origin", "18:00")).strip()
+    _, _, _, _, trading_start_hour = tf.get_end_hours(timezone, trading_day_origin=trading_day_origin)
+    market_open_time, _ = tf.define_trading_week(timezone, trading_start_hour, 0)
+
+    os.makedirs(os.path.join(data_dir, "historical"), exist_ok=True)
+
+    for spec in symbol_specs:
+        symbol = str(spec["symbol"]).upper()
+        freq = stra.get_asset_frequency(symbol)
+        train_span = stra.get_asset_train_span(symbol)
+        hist_path = os.path.join(data_dir, "historical", f"historical_{symbol}.csv")
+        raw_path = os.path.join(data_dir, "historical", f"raw_minute_{symbol}.csv")
+
+        if os.path.exists(hist_path):
+            try:
+                existing = pd.read_csv(hist_path, index_col=0)
+                if len(existing) >= 200:
+                    print(f"[{symbol}] Historical data sufficient ({len(existing)} bars). Skipping.")
+                    continue
+            except Exception:
+                pass
+
+        print(f"[{symbol}] Bulk-downloading historical data from IB (span=10 D)...")
+        try:
+            sdd.run_hist_data_download_app(
+                raw_path,
+                hist_path,
+                symbol,
+                timezone,
+                freq,
+                "false",
+                "10 D",
+                train_span,
+                market_open_time,
+            )
+            print(f"[{symbol}] Bulk download complete.")
+        except Exception as exc:
+            print(f"[{symbol}] IB bulk download failed: {exc}")
 
 
 def _ensure_strategy_optimization_for_schedule(variables, symbol_specs, previous_day_start_datetime, now_dt):
@@ -951,6 +1178,13 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
             day_start_datetime,
             market_close_time,
         )
+        data_dir = "data"
+        os.makedirs(data_dir, exist_ok=True)
+
+        # Bulk-download historical data from IB before optimization so the
+        # strategy has enough bars to compute meaningful signals.
+        _bulk_download_historical_data(symbol_specs, data_dir, timezone, variables)
+
         optimization_payload = _ensure_strategy_optimization_for_schedule(
             variables,
             symbol_specs,
@@ -965,9 +1199,6 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
             optimization_frequency=optimization_frequency,
             optimization_bucket=optimization_bucket,
         )
-
-        data_dir = "data"
-        os.makedirs(data_dir, exist_ok=True)
         database_path = os.path.join(data_dir, "database.xlsx")
         email_info_path = os.path.join(data_dir, "email_info.xlsx")
         ensure_trading_info_workbook(

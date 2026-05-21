@@ -127,8 +127,10 @@ def get_tradable_dates_and_stock_currency(host,port,client_id,symbol,primary_exc
     
     # Check the user's setting for using IBKR's SMART routing.
     if smart_bool:
-        # If true, set the contract's exchange to 'SMART'.
+        # If true, set both exchange and primaryExchange to 'SMART' so order
+        # routing AND historical data requests use the SMART data feed.
         info.contract.exchange = 'SMART'
+        info.contract.primaryExchange = 'SMART'
     else:
         # Otherwise, use the asset's primary exchange.
         info.contract.exchange = info.contract.primaryExchange

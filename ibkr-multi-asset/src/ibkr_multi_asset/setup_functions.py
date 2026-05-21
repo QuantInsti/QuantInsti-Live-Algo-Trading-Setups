@@ -1019,14 +1019,15 @@ def prepare_downloaded_data(app, params):
     app.new_df[f'{params[0]}'].rename(columns={'open':f'{str(data_label).lower()}_open','high':f'{str(data_label).lower()}_high',\
                                               'low':f'{str(data_label).lower()}_low','close':f'{str(data_label).lower()}_close'},inplace=True)
     
-    # Set the index to datetime type. IB can return either full timestamps or date-only strings depending on bar type.
+    # Set the index to datetime type. IB returns either "YYYYMMDD HH:MM:SS Timezone"
+    # or date-only "YYYYMMDD". Strip the timezone suffix (e.g. " America/Lima")
+    # so a single vectorised format parses everything in one shot.
     raw_index = app.new_df[f'{params[0]}'].index.astype(str)
-    parsed_index = pd.Series(pd.to_datetime(raw_index, format='%Y%m%d %H:%M:%S %Z', errors='coerce'), index=app.new_df[f'{params[0]}'].index)
+    raw_no_tz = raw_index.str.replace(r'\s+\S+$', '', regex=True)
+    parsed_index = pd.Series(pd.to_datetime(raw_no_tz, format='%Y%m%d %H:%M:%S', errors='coerce'), index=app.new_df[f'{params[0]}'].index)
     if parsed_index.isna().any():
         fallback_mask = parsed_index.isna()
         parsed_index.loc[fallback_mask] = pd.to_datetime(raw_index[fallback_mask], format='%Y%m%d', errors='coerce')
-    if parsed_index.isna().any():
-        parsed_index = pd.Series(pd.to_datetime(raw_index, format='mixed', errors='coerce'), index=app.new_df[f'{params[0]}'].index)
     app.new_df[f'{params[0]}'].index = pd.DatetimeIndex(parsed_index)
     app.new_df[f'{params[0]}'] = app.new_df[f'{params[0]}'][~app.new_df[f'{params[0]}'].index.isna()]
     # Get rid of the timezone tag when present
@@ -1053,16 +1054,16 @@ def _frequency_to_tws_bar_size(data_frequency):
     raise ValueError(f"Unsupported TWS bar size frequency: {data_frequency!r}")
 
 
-def _history_request_params(app, duration):
+def _history_request_params(app, duration, hist_id=0):
     asset_class = str(app.asset_spec.get("asset_class", "forex")).lower()
     candle_size = _frequency_to_tws_bar_size(app.data_frequency)
 
     if asset_class == "forex":
-        return [[0, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
+        return [[hist_id, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
     if asset_class == "metals":
-        return [[0, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
+        return [[hist_id, duration, candle_size, "MIDPOINT", "MIDPOINT", ""]]
     if asset_class == "stock":
-        return [[0, duration, candle_size, "ADJUSTED_LAST", "ADJUSTED_LAST", ""]]
+        return [[hist_id, duration, candle_size, "ADJUSTED_LAST", "ADJUSTED_LAST", ""]]
     if asset_class == "crypto":
         total_days = min(int(duration.split()[0]), _max_bootstrap_days_per_cycle(app))
         chunk_days = _crypto_chunk_days(app)
@@ -1072,7 +1073,7 @@ def _history_request_params(app, duration):
             this_chunk_days = min(chunk_days, total_days - offset_days)
             chunk_end = pd.Timestamp(app.current_period) - dt.timedelta(days=offset_days)
             params.append([
-                len(params),
+                hist_id + len(params),
                 f"{this_chunk_days} D",
                 candle_size,
                 "AGGTRADES",
@@ -1081,7 +1082,7 @@ def _history_request_params(app, duration):
             ])
             offset_days += this_chunk_days
         return params
-    return [[0, duration, candle_size, "TRADES", "TRADES", ""]]
+    return [[hist_id, duration, candle_size, "TRADES", "TRADES", ""]]
 
 
 def _use_regular_trading_hours_for_history(app):
@@ -1103,7 +1104,9 @@ def _max_history_request_days_for_asset(app):
     asset_class = str(app.asset_spec.get("asset_class", "forex")).lower()
     if asset_class == "crypto":
         return 35
-    return None
+    # Cap non-crypto backfills so IBKR can fulfill the request within the 45 s timeout.
+    # 5-min bars × 288 bars/day × 21 days = ~6 000 bars; well within IBKR limits.
+    return 21
 
 
 def _max_bootstrap_days_per_cycle(app):
@@ -1174,7 +1177,10 @@ def update_hist_data(app):
     days_passed = f'{request_days} D'
     
     # Determine the historical request payload for the asset class
-    params_list = _history_request_params(app, days_passed)
+    # Use a unique request ID per call to avoid error 322 (duplicate ticker ID)
+    import random
+    hist_id = random.randint(1000, 9999)
+    params_list = _history_request_params(app, days_passed, hist_id)
     
     # If the app is connected
     if app.isConnected():
@@ -1232,7 +1238,7 @@ def update_hist_data(app):
 
     if len(params_list) == 2 and asset_class != "crypto":
         # Concatenate the BID and ASK data
-        df = pd.concat([app.new_df['0'], app.new_df['1']], axis=1)
+        df = pd.concat([app.new_df[str(params_list[0][0])], app.new_df[str(params_list[1][0])]], axis=1)
         # Get the mid prices based on the BID and ASK prices
         df = tf.get_mid_series(df)
     elif asset_class == "crypto":
@@ -1244,7 +1250,7 @@ def update_hist_data(app):
         df.columns = ["Close", "Open", "High", "Low"]
     else:
         # Use TRADES data directly
-        df = app.new_df['0'].copy()
+        df = app.new_df[str(unique_prepare_params[0][0])].copy()
         df.columns = ["close", "open", "high", "low"] # Standardize names if needed
         # Ensure column names match mid-price series structure for resampling
         df.columns = ["Close", "Open", "High", "Low"]
@@ -2195,8 +2201,11 @@ def cancel_previous_take_profit_order(app):
 def cancel_risk_management_previous_orders(app):
     ''' Function to cancel the previous risk management orders'''
     
-    print('Canceling the previous risk management orders if needed...')
-    app.logging.info('Canceling the previous risk management orders if needed...')
+    # Only cancel if there are previous orders (avoid false messages on first run)
+    has_prev = isinstance(app.sl_order_id, int) or isinstance(app.tp_order_id, int)
+    if has_prev:
+        print('Canceling the previous risk management orders if needed...')
+        app.logging.info('Canceling the previous risk management orders if needed...')
     _stop_synthetic_crypto_monitor(app, wait=True)
     _clear_pending_synthetic_crypto_monitor(app)
                
@@ -2215,6 +2224,22 @@ def cancel_risk_management_previous_orders(app):
     # Run the executors
     for x in executors_list:
         x.result()
+
+    # Force a fresh broker snapshot pull so the sweep sees ALL currently active orders,
+    # not a stale snapshot from an earlier cycle.
+    _force_shared_broker_refresh(app)
+    # Sweep all active risk-management orders for this symbol from the fresh broker snapshot.
+    # The tracked sl_order_id/tp_order_id can miss orders from retries or stale tracking.
+    snapshot = _current_open_orders_snapshot(app)
+    if not snapshot.empty and 'OrderType' in snapshot.columns and 'OrderId' in snapshot.columns:
+        rm_types = {'STP', 'LMT', 'TRAIL'}
+        active_rm = snapshot[snapshot['OrderType'].astype(str).str.upper().isin(rm_types)]
+        for _, row in active_rm.iterrows():
+            try:
+                if app.isConnected():
+                    app.cancelOrder(int(row['OrderId']), OrderCancel())
+            except Exception:
+                pass
         
     # Drop the code errors related to canceling orders                                         
     app.errors_dict.pop(202, None)  
@@ -2790,6 +2815,23 @@ def _allow_symbol_level_broker_refresh(app):
 
 def _shared_cycle_quiet_mode(app):
     return bool(getattr(app, 'defer_posttrade_sync', False))
+
+
+def _force_shared_broker_refresh(app):
+    """Pull a fresh open-orders snapshot from IB, bypassing shared-cycle guards.
+    Used before the cancellation sweep so stale snapshots don't miss active orders."""
+    previous = bool(getattr(app, 'defer_posttrade_sync', False))
+    try:
+        app.force_shared_broker_pull = True
+        app.defer_posttrade_sync = False
+        request_orders(app, verbose=False)
+        # Seed the shared broker state so _current_open_orders_snapshot reads the fresh data
+        if not isinstance(getattr(app, 'shared_broker_state', None), dict):
+            app.shared_broker_state = {}
+        app.shared_broker_state['current_open_orders_snapshot'] = getattr(app, 'current_open_orders_snapshot', pd.DataFrame()).copy()
+    finally:
+        app.force_shared_broker_pull = False
+        app.defer_posttrade_sync = previous
 
 
 def _shared_cycle_symbol_broker_pull_allowed(app):
@@ -3678,6 +3720,9 @@ def send_orders(app):
                 print(f'[{app.ticker}] Current position already matches the target quantity. Only risk management orders were refreshed...')
                 app.logging.info(f'[{app.ticker}] Current position already matches the target quantity. Only risk management orders were refreshed...')
             else:
+                # Flat position with signal 0: cancel any orphaned stops from a previously closed position.
+                if app.signal == 0:
+                    cancel_risk_management_previous_orders(app)
                 print(f'[{app.ticker}] Current position already matches the target quantity. No market order was needed...')
                 app.logging.info(f'[{app.ticker}] Current position already matches the target quantity. No market order was needed...')
 
@@ -4507,17 +4552,20 @@ def save_portfolio_cycle_data(apps, send_email_summary=True):
             generate_live_portfolio_report(lead_app)
         except Exception as exc:
             if hasattr(lead_app, 'logging'):
-                lead_app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
+                if hasattr(lead_app, "logging"):
+                    lead_app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
+                app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
         send_email(lead_app)
 
 
 
 def print_portfolio_order_summary(apps):
-    headers = ['Asset', 'Signal', 'Leverage', 'OrderedQty']
+    headers = ['Asset', 'Status', 'Signal', 'Leverage', 'OrderedQty']
     rows = []
     for app in apps:
         rows.append([
             str(app.ticker),
+            str(getattr(app, 'trading_status', 'TRADING')),
             str(int(getattr(app, 'signal', 0))),
             f"{float(getattr(app, 'leverage', 0.0)):.6f}",
             f"{float(getattr(app, 'ordered_quantity', 0.0)):.6f}",
@@ -4787,7 +4835,8 @@ def save_data_and_send_email(app):
         try:
             generate_live_portfolio_report(app)
         except Exception as exc:
-            app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
+            if hasattr(app, "logging"):
+                app.logging.error("Failed to generate portfolio PDF before email: %s", exc)
         send_email(app)
 
         print("The data was saved successfully...")
@@ -4986,6 +5035,7 @@ def send_email(app):
         ]
 
         report_path = os.path.join("data", "portfolio_report.pdf")
+        app.logging.info(f"Looking for report at: {os.path.abspath(report_path)} (exists: {os.path.exists(report_path)})")
         app.logging.info(f"Looking for report at: {os.path.abspath(report_path)} (exists: {os.path.exists(report_path)})")
         subject = f"EPAT Trading App Status | {app.current_period}"
         msg = EmailMessage()

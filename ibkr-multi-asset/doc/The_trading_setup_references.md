@@ -36,7 +36,7 @@ Useful references:
 
 The codebase includes a standalone constraint-discovery utility:
 
-- [broker_constraint_report.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/broker_constraint_report.py)
+- [broker_constraint_report.py](user_config/broker_constraint_report.py)
 
 This should be used before writing a realistic backtest because some execution constraints are broker- and account-specific:
 
@@ -49,13 +49,13 @@ This should be used before writing a realistic backtest because some execution c
 ## Runtime Files
 
 Core runtime:
-- [engine.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/engine.py)
-- [setup.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/setup.py)
-- [setup_functions.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/setup_functions.py)
-- [trading_functions.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/src/ibkr_multi_asset/trading_functions.py)
+- [engine.py](src/ibkr_multi_asset/engine.py)
+- [setup.py](src/ibkr_multi_asset/setup.py)
+- [setup_functions.py](src/ibkr_multi_asset/setup_functions.py)
+- [trading_functions.py](src/ibkr_multi_asset/trading_functions.py)
 
 Bundled default strategy:
-- [strategy.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/strategies/strategy.py)
+- [strategy.py](user_config/strategies/strategy.py)
 
 Bundled runtime configuration:
-- [main.py](/home/josgt/Downloads/alpha_quant/QuantInsti-Live-Algo-Trading-Setups/ibkr-multi-asset/user_config/main.py)
+- [main.py](user_config/main.py)

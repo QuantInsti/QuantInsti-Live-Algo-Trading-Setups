@@ -3,6 +3,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
@@ -141,9 +142,6 @@ def _extract_latest_rows(df, group_cols):
     return out.groupby(group_cols, as_index=False).tail(1)
 
 
-# Known IB commission rates per asset class
-_IB_COMMISSION_RATES = {"FUT": 1.24, "CASH": 2.00, "CMDTY": 0.20, "CRYPTO": 0.18}
-
 def _build_trade_diagnostics(executions, commissions, positions=None):
     """Build trade diagnostics from executions and commissions.
     If Realized PnL / Commission are missing, estimate from executions using known rates."""
@@ -155,7 +153,7 @@ def _build_trade_diagnostics(executions, commissions, positions=None):
     if "Commission" in pnl_frame.columns:
         pnl_frame["Commission"] = _to_numeric(pnl_frame["Commission"])
 
-    # Step 2: Merge Symbol from executions (standard merge — do this ONCE)
+    # Step 2: Merge Symbol from executions (standard merge; do this ONCE)
     if not executions.empty and {"ExecutionId", "Symbol"}.issubset(executions.columns) and "ExecutionId" in pnl_frame.columns:
         exec_cols = ["ExecutionId", "Symbol"] + (["Currency"] if "Currency" in executions.columns else [])
         exec_sym_map = executions[exec_cols].drop_duplicates()
@@ -192,20 +190,8 @@ def _build_trade_diagnostics(executions, commissions, positions=None):
                         if n > 0:
                             pnl_frame.at[ei,"Realized PnL"] = pnl_by_sym[sym] / n
 
-    # Step 4: Estimate commissions from known rates if all NaN
-    if "Commission" in pnl_frame.columns and pnl_frame["Commission"].isna().all() and not executions.empty:
-        exec_df2 = executions.copy()
-        exec_df2["SecType"] = exec_df2["SecType"].astype(str).str.upper()
-        rate_map = exec_df2[["ExecutionId","SecType"]].drop_duplicates()
-        # Merge SecType from executions (use distinct suffix to avoid collision)
-        pnl_frame = pnl_frame.merge(rate_map, on="ExecutionId", how="left", suffixes=("","_sec"))
-        for ei, er in pnl_frame.iterrows():
-            st = str(er.get("SecType","")).upper()
-            rate = _IB_COMMISSION_RATES.get(st, 0.0)
-            pnl_frame.at[ei,"Commission"] = rate
-        # Clean up suffix column if created
-        if "SecType_sec" in pnl_frame.columns:
-            pnl_frame = pnl_frame.drop(columns=["SecType_sec"])
+    # Commission estimation REMOVED; report only what IBKR provides.
+    # If Commission is NaN in the database, the report will show 0 or n/a.
 
     # Step 5: Drop rows without PnL and compute diagnostics
     pnl_frame = pnl_frame.dropna(subset=["Realized PnL"])
@@ -291,7 +277,7 @@ def _build_holdings_snapshot(portfolio_snapshots, positions, final_equity):
             if "Avg cost" in latest.columns and "Position" in latest.columns:
                 latest["Avg cost"] = _to_numeric(latest["Avg cost"])
                 latest["Position"] = _to_numeric(latest["Position"])
-                # For FX positions where Currency != USD, Avg cost is in quote currency —
+                # For FX positions where Currency != USD, Avg cost is in quote currency;
                 # do NOT multiply; use |Position| directly (it's the base-currency quantity)
                 if "Currency" in latest.columns:
                     cur = latest["Currency"].astype(str).str.upper()
@@ -430,14 +416,7 @@ def _build_execution_diagnostics(open_orders, orders_status, executions, commiss
         comm = commissions.copy()
         if "Commission" in comm.columns:
             comm["Commission"] = _to_numeric(comm["Commission"])
-            if comm["Commission"].isna().all() and not executions.empty and "SecType" in executions.columns:
-                er = executions[["ExecutionId","SecType"]].drop_duplicates().copy()
-                er["SecType"] = er["SecType"].astype(str).str.upper()
-                er["_ec"] = er["SecType"].map(_IB_COMMISSION_RATES).fillna(0.0)
-                comm = comm.merge(er[["ExecutionId","_ec"]], on="ExecutionId", how="left")
-                metrics["avg_commission_per_exec"] = float(comm["_ec"].mean()) if len(comm) else np.nan
-            else:
-                metrics["avg_commission_per_exec"] = float(comm["Commission"].dropna().mean()) if len(comm) else np.nan
+            metrics["avg_commission_per_exec"] = float(comm["Commission"].dropna().mean()) if "Commission" in comm.columns and len(comm) and not comm["Commission"].isna().all() else np.nan
         if not exec_df.empty and {"ExecutionId", "Symbol"}.issubset(exec_df.columns) and "ExecutionId" in comm.columns:
             symbol_map = exec_df[["ExecutionId", "Symbol"]].drop_duplicates()
             comm = comm.merge(symbol_map, on="ExecutionId", how="left")
@@ -667,7 +646,9 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
         final_cap = float(equity_series.iloc[-1])
         total_ret = (final_cap / initial_cap) - 1.0 if initial_cap else 0.0
         days = max((equity_series.index[-1] - equity_series.index[0]).days, 1)
-        cagr = (1.0 + total_ret) ** (365.0 / days) - 1.0 if total_ret > -1 else -1.0
+        MIN_TRADING_DAYS = 5
+        trading_days = max(1, int(days * 5.0 / 7.0))
+        cagr = (1.0 + total_ret) ** (252.0 / trading_days) - 1.0 if total_ret > -1 and trading_days >= MIN_TRADING_DAYS else np.nan
 
         # ── Sharpe, Sortino, Vol from period_returns (actual bar frequency) ──
         ann_vol = float(ann_factor * period_returns.std()) if len(period_returns) >= 2 else np.nan
@@ -682,7 +663,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
         )
         # Flag: annealing note based on actual bar count
         if len(period_returns) < 10:
-            sharpe_note = f" ({len(period_returns)} bars — early estimate)"
+            sharpe_note = f" ({len(period_returns)} bars; early estimate)"
         elif not np.isfinite(sharpe):
             sharpe_note = " (n/a)"
         else:
@@ -731,9 +712,9 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             ax.text(0.94, 0.94, f"{dt.datetime.now().strftime('%Y-%m-%d %H:%M')}", transform=ax.transAxes, ha="right", va="center", fontsize=7, color=WHITE)
 
             # Period line (compact)
-            ax.text(0.04, 0.87, f"Period: {equity_series.index[0].date()} to {equity_series.index[-1].date()}  |  Equity: {_currency_or_na(latest_equity)} ({latest_equity_source})  |  Return: {_safe_pct(total_ret)}  |  CAGR: {_safe_pct(cagr)}", transform=ax.transAxes, ha="left", va="center", fontsize=7.5, color=GOLD, fontweight="bold")
+            ax.text(0.04, 0.87, f"Period: {equity_series.index[0].date()} to {equity_series.index[-1].date()}  |  Equity: {_currency_or_na(latest_equity)} ({latest_equity_source})  |  Return: {_safe_pct(total_ret)}  |  CAGR: {_safe_pct(cagr)}{(" (need " + str(MIN_TRADING_DAYS) + "+ trading days)" if trading_days < MIN_TRADING_DAYS else "")}", transform=ax.transAxes, ha="left", va="center", fontsize=7.5, color=GOLD, fontweight="bold")
 
-            # ── Four metric cards — vertical stacking, taller cards ──
+            # ── Four metric cards: vertical stacking, taller cards ──
             card_colors = [ACC, "#2196F3", GOLD, "#4CAF50"]
             card_titles = ["PERFORMANCE", "EQUITY", "TRADING", "EXPOSURE"]
             card_x = [0.03, 0.51, 0.03, 0.51]
@@ -746,7 +727,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ax.add_patch(mpatches.FancyBboxPatch((cx, cy+card_h-0.04), card_w, 0.04, boxstyle="round,pad=0", facecolor=card_colors[ci], edgecolor="none", transform=ax.transAxes))
                 ax.text(cx+0.03, cy+card_h-0.02, card_titles[ci], transform=ax.transAxes, ha="left", va="center", fontsize=9, fontweight="bold", color=WHITE)
 
-            # Card 1: Performance — stacked vertically
+            # Card 1: Performance: stacked vertically
             c1x, c1y, c1h = 0.03, 0.58, 0.26
             row_y = c1y + c1h - 0.06  # start below title bar
             row_gap = 0.03
@@ -756,7 +737,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ax.text(c1x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
                 row_y -= row_gap
 
-            # Card 2: Equity — stacked vertically
+            # Card 2: Equity: stacked vertically
             c2x, c2y, c2h = 0.51, 0.58, 0.26
             row_y = c2y + c2h - 0.06
             for label, val in [("Start", f"{_currency_or_na(initial_cap)}"), ("Latest", f"{_currency_or_na(final_cap)}"),
@@ -765,7 +746,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ax.text(c2x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
                 row_y -= row_gap
 
-            # Card 3: Trading — stacked vertically
+            # Card 3: Trading: stacked vertically
             c3x, c3y, c3h = 0.03, 0.20, 0.26
             row_y = c3y + c3h - 0.06
             for label, val in [("Net PnL", f"{_currency_or_na(trade_diag['net_realized_pnl'])}"),
@@ -777,7 +758,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ax.text(c3x+0.04, row_y, f"{label}: {val}", transform=ax.transAxes, fontsize=7.5, color=WHITE)
                 row_y -= row_gap
 
-            # Card 4: Exposure — stacked vertically
+            # Card 4: Exposure: stacked vertically
             c4x, c4y, c4h = 0.51, 0.20, 0.26
             row_y = c4y + c4h - 0.06
             for label, val in [("Gross Exp", f"{_currency_or_na(holdings_diag['metrics'].get('gross_exposure'))}"),
@@ -800,6 +781,7 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
             ax.set_facecolor(DARK)
             ax.plot(equity_series.index, equity_series.values, color="tab:blue", linewidth=1.6)
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:,.0f}'))
             ax.set_title("Portfolio Equity Curve", color=WHITE)
             ax.grid(alpha=0.2)
             ax.tick_params(axis="x", rotation=45, colors=MUTED); ax.tick_params(axis="y", colors=MUTED)
@@ -808,8 +790,9 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
             # Drawdown (separate figure)
             fig, ax = plt.subplots(figsize=(12, 4.5), facecolor=DARK)
             ax.set_facecolor(DARK)
-            ax.fill_between(drawdown.index, drawdown.values, 0.0, color="tab:red", alpha=0.3)
+            ax.fill_between(drawdown.index, drawdown.values * 100.0, 0.0, color="tab:red", alpha=0.3)
             ax.axhline(0, color="white", linewidth=0.8)
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f'{x:.1f}%'))
             ax.set_title("Portfolio Drawdown", color=WHITE)
             ax.grid(alpha=0.2)
             ax.tick_params(axis="x", rotation=45, colors=MUTED); ax.tick_params(axis="y", colors=MUTED)
@@ -838,8 +821,8 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ax.plot(valid_rolling.index, valid_rolling.values, color="tab:blue", linewidth=1.4)
                 ax.axhline(0, color="white", linewidth=0.8)
             else:
-                ax.text(0.5, 0.5, "Not enough data for rolling Sharpe", ha="center", va="center", transform=ax.transAxes, color=MUTED)
-            ax.set_title("Rolling Sharpe (adaptive window)", color=WHITE)
+                ax.text(0.5, 0.5, "Not enough data for rolling Sharpe (need 63+ daily returns)", ha="center", va="center", transform=ax.transAxes, color=MUTED)
+            ax.set_title("Rolling 63-Day Sharpe", color=WHITE)
             ax.grid(alpha=0.2)
             ax.tick_params(axis='x', rotation=45, colors=MUTED); ax.tick_params(axis='y', colors=MUTED)
             pdf.savefig(fig, bbox_inches="tight", facecolor=DARK)
@@ -1260,15 +1243,15 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                     "Account health: account_updates sheet (fallback: cash_balance for sparse fields).",
                 ]),
                 ("Performance Metrics", [
-                    "CAGR = (Final / Initial)^(365.25/days) − 1, using actual calendar days.",
+                    "CAGR = (Final / Initial)^(252.0/trading_days) − 1, using 252 trading-day convention. Requires 5+ trading days.",
                     "Sharpe = √(periods_per_year) × μ(period_returns) / σ(period_returns).",
                     "Sortino = √(periods_per_year) × μ(period_returns) / σ(downside_returns).",
                     "Annualized Vol = √(periods_per_year) × σ(period_returns).",
                     "Max Drawdown = min(equity / running_max − 1).",
                     "Calmar = CAGR / |Max Drawdown|.",
                     "VaR95 = 5th percentile of period returns; ES95 = mean of returns below VaR95.",
-                    "Annualization factor derived from median time delta between cash_balance rows.",
-                    "Sharpe/Sortino on limited bars (< 10) are flagged as early estimates.",
+                    "Annualization uses 252 trading-day convention (weekdays only).",
+                    "Sharpe/Sortino require 5+ daily observations; fewer = n/a (small-sample noise).",
                 ]),
                 ("Trade Diagnostics", [
                     "Realized PnL: from commissions sheet 'Realized PnL' column when IBKR reports it.",
@@ -1312,8 +1295,8 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                 ("Monthly Heatmap & Rolling Sharpe", [
                     "Monthly returns: daily returns compounded to monthly frequency.",
                     "Monthly heatmap: pivot table of monthly returns (rows=years, cols=months).",
-                    "Rolling Sharpe: computed from period returns (native bar frequency),",
-                    "   window = max(20, periods_per_year / 252) ≈ 1 trading-day equivalent.",
+                    "Rolling Sharpe: 63-trading-day window on daily equity returns.",
+                    "   Standard 63-day rolling window on daily returns.",
                 ]),
                 ("General Caveats", [
                     "All metrics are computed from the database workbook at report generation time.",
@@ -1322,8 +1305,8 @@ def generate_live_portfolio_report(app_instance, output_path="data/portfolio_rep
                     "IBKR does not always report Commission or Realized PnL;",
                     "   estimated values are flagged where applicable.",
                     "'n/a' means: insufficient data, undefined metric, or NaN in source.",
-                    "Sharpe/Sortino/Vol are computed from intraday bar returns and annualized",
-                    "   to provide usable estimates even with limited daily history.",
+                    "Sharpe, Sortino, Calmar, and CAGR require 5+ trading days of daily returns.",
+                    "   With fewer data points, they are shown as n/a to avoid small-sample artefacts.",
                     "This report is auto-generated by the multi-asset live trading engine.",
                 ]),
             ]

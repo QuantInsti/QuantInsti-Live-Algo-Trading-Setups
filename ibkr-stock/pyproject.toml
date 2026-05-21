@@ -30,6 +30,7 @@ dependencies = [
     'ta~=0.11.0',
     'yfinance~=0.2.61',
     'shap-hypetune~=0.2.7',
+    'python-dotenv',
 ]
 
 description = "A trading setup to trade stock assets algorithmically using the Interactive Brokers' API"
