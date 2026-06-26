@@ -20,9 +20,11 @@ The bundled configuration in [main.py](user_config/main.py) is a validation prof
 
 - universe:
   - `EURUSD`
+  - `USDJPY`
   - `MES`
   - `XAUUSD`
   - `ETH`
+  - `BTC`
 - `strategy_file = "strategies/strategy.py"`
 - `optimization_frequency = "daily"`
 - `strategy_frequency = "5min"`

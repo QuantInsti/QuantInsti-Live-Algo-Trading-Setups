@@ -25,9 +25,9 @@ DEFAULT_GLOBAL_PARAMS = {
     "portfolio_method": "hierarchical_risk_parity",
     "leverage_method": "kelly_capped",
     "validation_fraction": 0.25,
-    "fast_window_grid": [10, 20, 30, 40, 60],
-    "slow_window_grid": [80, 120, 160, 200, 260],
-    "atr_window_grid": [10, 14, 20, 30],
+    "fast_window_grid": [20, 40],
+    "slow_window_grid": [80, 160],
+    "atr_window_grid": [14, 20],
     "stop_atr_multiple": 2.0,
     "take_profit_atr_multiple": 3.0,
     "covariance_ridge": 1e-8,
@@ -127,6 +127,19 @@ def get_asset_frequency(symbol) -> str:
 
 def get_asset_train_span(symbol) -> int:
     return _strategy_train_span()
+
+
+def get_portfolio_rebalance_frequency() -> str:
+    """Return the frequency at which portfolio weights are recomputed
+    and orders are rebalanced.  Default is daily ('1D')."""
+    return "1D"
+
+
+def get_risk_estimation_frequency() -> str:
+    """Return the common frequency used for covariance, HRP, and Kelly
+    estimation inside the portfolio risk model.  Must be >= the coarsest
+    asset frequency.  Default equals the rebalance frequency ('1D')."""
+    return get_portfolio_rebalance_frequency()
 
 
 def _symbols_for_kind(kind: str, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols=None) -> list[str]:
@@ -535,8 +548,22 @@ def strategy_parameter_optimization(symbol_specs=None, optimization_frequency=No
         asset_params[symbol] = params
         validation_returns[symbol] = returns
 
-    weights = _hrp_weights(validation_returns)
-    portfolio_returns = _portfolio_validation_returns(weights, validation_returns)
+    # ── Risk model: resample to a common frequency for valid covariance/HRP/Kelly ──
+    risk_freq = get_risk_estimation_frequency()
+    risk_returns = {}
+    for symbol in symbols:
+        hist = _normalize_history_frame(_load_symbol_history(symbol))
+        if hist.empty:
+            risk_returns[symbol] = pd.Series(dtype=float)
+            continue
+        frame = _resample_ohlc(hist.tail(int(_strategy_train_span()) + 500), risk_freq)
+        if frame.empty or len(frame) < 2:
+            risk_returns[symbol] = pd.Series(dtype=float)
+            continue
+        risk_returns[symbol] = frame["close"].pct_change().dropna()
+
+    weights = _hrp_weights(risk_returns)
+    portfolio_returns = _portfolio_validation_returns(weights, risk_returns)
     portfolio_leverage_multiplier = _kelly_leverage(portfolio_returns)
     payload = _strategy_config_payload(
         symbol_specs=symbol_specs,
@@ -726,7 +753,7 @@ def refresh_symbol_signal(app):
     hist = getattr(app, "historical_data", None)
     if hist is None or hist.empty:
         return
-    frame = _prepare_symbol_frame(symbol, hist.tail(_get_train_span() + 200).copy())
+    frame = _prepare_symbol_frame(symbol, hist.tail(_strategy_train_span() + 200).copy())
     if frame.empty:
         return
     pos = _trend_position_series(frame)

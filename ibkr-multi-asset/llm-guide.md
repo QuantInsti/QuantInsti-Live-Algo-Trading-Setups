@@ -202,7 +202,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 | **Position sizing** | "Do you cap position size per asset? Is there a maximum allocation per symbol?" |
 | **Regime/volatility** | "Does your strategy reduce exposure in high-volatility regimes? If so, what threshold?" |
 
-**Format for LLM questions:** The LLM should batch related questions together (2-4 at a time) rather than asking one at a time. After receiving answers, the LLM should confirm: "I now have enough to generate all 10 functions. Shall I proceed?"
+**Format for LLM questions:** The LLM should batch related questions together (2-4 at a time) rather than asking one at a time. After receiving answers, the LLM should confirm: "I now have enough to generate all 12 functions. Shall I proceed?"
 
 **If the user says "I don't have that / I don't know":**
 
@@ -215,7 +215,7 @@ Whether the student provides a backtest script (Path A) or a plain-language desc
 
 ## What the engine expects from your strategy file
 
-The setup engine calls these 10 functions. Every one must exist with the exact signature shown below. The engine imports your file as `stra` and calls:
+The setup engine calls these 12 functions. Every one must exist with the exact signature shown below. The engine imports your file as `stra` and calls:
 
 - `stra.get_asset_runtime_policy(symbol, asset_class)` :  per-asset session rules
 - `stra.get_asset_frequency(symbol)` :  bar frequency string
@@ -225,6 +225,8 @@ The setup engine calls these 10 functions. Every one must exist with the exact s
 - `stra.validate_strategy_optimization(symbol_specs, ...)` :  validates existing config
 - `stra.get_signal(app, fx_pairs, futures_symbols, metals_symbols, crypto_symbols, stock_symbols, leverage)` :  live signals
 - `stra.refresh_symbol_signal(app)` :  per-bar per-symbol signal refresh (called at each asset's trading bar)
+- `stra.get_portfolio_rebalance_frequency()` :  cadence for portfolio weight recomputation and order rebalancing
+- `stra.get_risk_estimation_frequency()` :  common frequency for covariance, HRP, and Kelly estimation
 - `stra.set_stop_loss_price(app)` :  per-bar stop price
 - `stra.set_take_profit_price(app)` :  per-bar take-profit price
 
@@ -484,6 +486,43 @@ def refresh_symbol_signal(app):
         targets[symbol]["stop_price"] = np.nan
         targets[symbol]["take_profit_price"] = np.nan
     app.strategy_targets = targets
+```
+
+---
+
+### 8b. `get_portfolio_rebalance_frequency`
+
+```python
+def get_portfolio_rebalance_frequency() -> str:
+```
+
+**Purpose:** Tell the engine how often to recompute portfolio weights and rebalance orders.
+
+**Return:** `"1D"` for daily rebalancing. Use `"1W"` for weekly, or any frequency string supported by
+`trading_functions.get_data_frequency_values()`.
+
+```python
+def get_portfolio_rebalance_frequency() -> str:
+    return "1D"
+```
+
+---
+
+### 8c. `get_risk_estimation_frequency`
+
+```python
+def get_risk_estimation_frequency() -> str:
+```
+
+**Purpose:** Return the common frequency used for covariance, HRP, and Kelly estimation
+inside the portfolio risk model. Must be ≥ the coarsest asset frequency so every
+asset can be resampled to it without synthesising data.
+
+**Return:** Default equals the rebalance frequency (`"1D"`).
+
+```python
+def get_risk_estimation_frequency() -> str:
+    return get_portfolio_rebalance_frequency()
 ```
 
 ---
@@ -946,7 +985,7 @@ The engine fetches and maintains historical data automatically. Here's the lifec
 
 | Stage | What happens |
 |---|---|
-| **First run** | `engine.py` → `_ensure_history_file()` creates a skeleton CSV at `data/historical/historical_MES.csv` with columns `open, high, low, close` and one dummy row |
+| **First run** | `engine.py` → `_bulk_download_historical_data()` downloads 10 days (intraday) or 2 years (daily) of history from IBKR for each symbol. If IBKR is unreachable, a skeleton CSV with one dummy row is created as fallback |
 | **Every bar** | `engine.py` → `_configure_portfolio_app_for_symbol()` sets `app.historical_data = pd.read_csv(...)` and the engine appends new bars from IBKR's `reqHistoricalData` |
 | **End of cycle** | `sf.save_portfolio_cycle_data()` writes `app.historical_data.to_csv(...)` :  data persists across restarts |
 | **Next restart** | `trading_app.__init__()` reads the CSV: `self.historical_data = pd.read_csv(historical_data_address, index_col=0).tail(keep_rows)` |
@@ -954,7 +993,7 @@ The engine fetches and maintains historical data automatically. Here's the lifec
 **What this means for your strategy file:**
 - You never download data. The engine handles IBKR fetching, CSV storage, and bar-by-bar append.
 - Your `_load_symbol_history` function reads from the same CSV path and falls back to `app.historical_data`.
-- On first run, the CSV has only one dummy row. Your `_prepare_symbol_frame` will return empty until enough bars accumulate. This is normal :  the engine retries each bar.
+- On first run, the engine bulk-downloads 10 days (intraday) or 2 years (daily) of IBKR data. If IBKR is unreachable, only a dummy row exists and `_prepare_symbol_frame` will return empty until live bars accumulate.
 - Keep your `train_span` realistic. A 5-min strategy with `strategy_optimization_lookback = 3000` needs ~10 trading days of data before signals are reliable.
 
 ---
@@ -992,7 +1031,7 @@ Your strategy can read ALL of these via `_main_variables()`. Use only what you n
 ## Portability rules
 
 1. **Do NOT modify engine source files.** Only create/modify files under `user_config/`.
-2. **All 10 functions must exist** with the exact signatures documented above.
+2. **All 12 functions must exist** with the exact signatures documented above.
 3. **Internal logic is free.** Change signal generation, portfolio weighting, parameter optimization :  anything inside the function body. Just keep the signatures.
 4. **Data paths use `Path(__file__).resolve().parents[1]`** :  not hardcoded absolute paths.
 5. **Optimization manifest** must be saved to `data/models/` inside the `user_config` directory.
@@ -1037,7 +1076,9 @@ A single `my_strategy.py` file containing (in order):
 18. `validate_strategy_optimization` (skeleton provided in section 6)
 19. `get_signal` (skeleton provided in section 7)
 20. `refresh_symbol_signal` (boilerplate provided in section 8)
-21. `set_stop_loss_price`, `set_take_profit_price` (full code provided above)
+21. `get_portfolio_rebalance_frequency` (stub provided in section 8b)
+22. `get_risk_estimation_frequency` (stub provided in section 8c)
+23. `set_stop_loss_price`, `set_take_profit_price` (full code provided above)
 
 The file should be self-contained (no imports from `strategy.py` or other user files) and ~600-900 lines.
 
@@ -1247,7 +1288,7 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 | Error | Likely cause | LLM should ask |
 |---|---|---|
 | `ModuleNotFoundError: No module named 'my_strategy'` | File not in `strategies/` folder or `main.py` points to wrong path | "Is `my_strategy.py` in `user_config/strategies/`? Does `main.py` have `strategy_file = 'strategies/my_strategy.py'`?" |
-| `AttributeError: module 'my_strategy' has no attribute 'get_signal'` | Missing function or wrong function name | "Does your file define all 10 required functions? Check for typos in function names." |
+| `AttributeError: module 'my_strategy' has no attribute 'get_signal'` | Missing function or wrong function name | "Does your file define all 12 required functions? Check for typos in function names." |
 | `TypeError: get_signal() missing X required positional arguments` | Function signature doesn't match | "Compare your `get_signal` signature with the one in the guide. It must accept all parameters even if you don't use them." |
 | `KeyError: 'trend_spread'` or `KeyError: 'close'` | Column not found in DataFrame :  missing feature or normalization failed | "What columns does your `_prepare_symbol_frame` produce? Is `_normalize_ohlc` returning the standard `open, high, low, close` columns?" |
 | `ValueError: Strategy manifest incomplete` | Optimization manifest missing per-asset params or weights | "Does your `strategy_parameter_optimization` store params for every symbol in the universe? Check the `asset_params` and weights dicts." |
@@ -1260,7 +1301,7 @@ If the user reports an error after placing `my_strategy.py` and running the setu
 ### Debugging workflow the LLM should follow
 
 1. **Read the error:** ask the user to share the full traceback.
-2. **Identify the function:** which of the 10 functions raised the error?
+2. **Identify the function:** which of the 12 functions raised the error?
 3. **Check the function's contract:** compare against the guide's signature and return shape.
 4. **Isolate:** ask the user to run a minimal test importing just `my_strategy` and calling one function.
 5. **Fix or rebuild:** apply the fix to the strategy file. If the error is in the engine (not the strategy), see next section.

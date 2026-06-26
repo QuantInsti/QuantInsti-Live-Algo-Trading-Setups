@@ -468,9 +468,19 @@ def train_test_split(X, y, split, purged_window_size, embargo_period):
     
     return X_train, X_test, y_train, y_test
 
-def define_trading_week(local_timezone, trading_start_hour, day_end_minute):
-    """ Function to get the current trading week start and end datetimes """
-        
+def define_trading_week(local_timezone, trading_start_hour, day_end_minute, close_hour=None, close_minute=None):
+    """Get the current trading week start and end datetimes.
+
+    ``trading_start_hour`` / ``day_end_minute`` set the Sunday market-open
+    time.  ``close_hour`` / ``close_minute`` set the Friday market-close time;
+    when omitted they default to the same values as the open, preserving the
+    previous behaviour for callers that only pass three arguments.
+    """
+    if close_hour is None:
+        close_hour = trading_start_hour
+    if close_minute is None:
+        close_minute = day_end_minute
+
     # Set the now datetime
     today = dt.datetime.now().astimezone(pytz.timezone(local_timezone))
     
@@ -479,22 +489,23 @@ def define_trading_week(local_timezone, trading_start_hour, day_end_minute):
     # Set the Bogota-based today's datetime (naive)
     bogota_datetime = today.astimezone(pytz.timezone(bog))
     
-    # Bogota-based start datetime
-    bogota_trading_start_datetime = today.replace(hour=trading_start_hour, minute=day_end_minute, second=0, microsecond=0).astimezone(pytz.timezone(bog))
-    # Bogota-based start hour
-    bogota_trading_start_hour = bogota_trading_start_datetime.hour
-    # Bogota-based start minute
-    bogota_trading_start_minute = bogota_trading_start_datetime.minute
+    # Bogota-based open datetime (Sunday open)
+    bogota_open_dt = today.replace(hour=trading_start_hour, minute=day_end_minute, second=0, microsecond=0).astimezone(pytz.timezone(bog))
+    bogota_open_hour = bogota_open_dt.hour
+    bogota_open_minute = bogota_open_dt.minute
+
+    # Bogota-based close datetime (Friday close — may differ from open)
+    bogota_close_dt = today.replace(hour=close_hour, minute=close_minute, second=0, microsecond=0).astimezone(pytz.timezone(bog))
     
     # If we're out of trading hours (e.g., after market close on Friday, or on Saturday/Sunday)
-    if (bogota_datetime.weekday() == 4 and bogota_datetime.time() >= bogota_trading_start_datetime.time()) or \
+    if (bogota_datetime.weekday() == 4 and bogota_datetime.time() >= bogota_close_dt.time()) or \
        (bogota_datetime.weekday() == 5) or \
-       (bogota_datetime.weekday() == 6 and bogota_datetime.time() <= bogota_trading_start_datetime.time()):
+       (bogota_datetime.weekday() == 6 and bogota_datetime.time() <= bogota_open_dt.time()):
         
         # The trading week has ended, so the next one starts on the upcoming Sunday.
         sunday = bogota_datetime + dt.timedelta(days=(6 - bogota_datetime.weekday()) % 7)
         # The end of that *next* trading week will be the Friday after that Sunday.
-        friday = sunday + dt.timedelta(days=5) # This is the corrected line
+        friday = sunday + dt.timedelta(days=5)
     # If we're within the trading hours
     else:
         # The trading week ends on the upcoming Friday.
@@ -502,10 +513,10 @@ def define_trading_week(local_timezone, trading_start_hour, day_end_minute):
         # The trading week started on the previous Sunday.
         sunday = bogota_datetime - dt.timedelta(days=(bogota_datetime.weekday() + 1) % 7)
         
-    # Set the trading week start datetime
-    week_start = dt.datetime(sunday.year, sunday.month, sunday.day, bogota_trading_start_hour, bogota_trading_start_minute, 0)
-    # Set the trading week end datetime
-    week_end = dt.datetime(friday.year, friday.month, friday.day, bogota_trading_start_hour, bogota_trading_start_minute, 0)
+    # Set the trading week start datetime (Sunday open)
+    week_start = dt.datetime(sunday.year, sunday.month, sunday.day, bogota_open_hour, bogota_open_minute, 0)
+    # Set the trading week end datetime (Friday close)
+    week_end = dt.datetime(friday.year, friday.month, friday.day, close_hour, close_minute, 0)
     
     # Localize the week start datetime to Bogota's timezone
     week_start = pytz.timezone(bog).localize(week_start)
@@ -715,8 +726,16 @@ def get_end_hours_old(timezone, london_start_hour, local_restart_hour):
     return restart_hour, restart_minute, day_end_hour, day_end_minute, trading_start_hour
 
 def get_end_hours(timezone, trading_day_origin=None, market_close_timezone='US/Eastern', market_close_hour=17, market_close_minute=0, reopen_delay_minutes=15):
-    """Get the local trading-day boundary from a configured local origin or close-plus-delay fallback."""
+    """Get the local trading-day boundaries.
 
+    ``trading_day_origin`` controls the daily bar-schedule anchor and restart
+    hour (e.g. 18:00 Lima).  The *weekend* gate is driven by the real venue
+    close — ``market_close_hour`` in ``market_close_timezone`` — so that the
+    engine stops cycling when the exchange actually shuts on Friday, which can
+    be earlier than the bar-schedule origin.
+    """
+
+    # ── daily bar-schedule anchor ───────────────────────────────────────
     if trading_day_origin is not None and str(trading_day_origin).strip() != "":
         origin_hour, origin_minute = parse_local_time_origin(trading_day_origin)
     else:
@@ -733,9 +752,21 @@ def get_end_hours(timezone, trading_day_origin=None, market_close_timezone='US/E
 
     restart_hour = int(origin_hour)
     restart_minute = int(origin_minute)
-    day_end_hour = int(origin_hour)
-    day_end_minute = int(origin_minute)
     trading_start_hour = int(origin_hour)
+
+    # ── weekend gate: real venue close, converted to local ──────────────
+    local_tz = pytz.timezone(timezone)
+    close_tz = pytz.timezone(market_close_timezone)
+    today_close = dt.datetime.now(close_tz).replace(
+        hour=market_close_hour,
+        minute=market_close_minute,
+        second=0,
+        microsecond=0,
+    )
+    local_close = today_close.astimezone(local_tz)
+    day_end_hour = int(local_close.hour)
+    day_end_minute = int(local_close.minute)
+
     return restart_hour, restart_minute, day_end_hour, day_end_minute, trading_start_hour
         
 def get_data_frequency_values(data_frequency):

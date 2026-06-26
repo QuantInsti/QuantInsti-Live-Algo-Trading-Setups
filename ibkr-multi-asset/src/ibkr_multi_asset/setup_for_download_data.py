@@ -27,11 +27,18 @@ warnings.filterwarnings('ignore')
     
 class app_for_download_data(EWrapper, EClient):
     ''' Serves as the client and the wrapper '''
+
     def __init__(self, addr, client_id, file_name, update = False, \
                  contract = {}, now = '', download_span = '1 D', timezone= 'US/Eastern', \
-                 saturdays = list()):
+                 saturdays = list(), what_to_show = None, silent = False, bar_size = '1 min'):
         
         EClient.__init__(self, self)
+        
+        # Silent mode for parallel bulk downloads
+        self.silent = silent
+        
+        # Bar size for historical data requests (matches asset frequency)
+        self.bar_size = bar_size
         
         # Number of threads
         self.workers = 4
@@ -98,20 +105,20 @@ class app_for_download_data(EWrapper, EClient):
             self.now = now
             self.saturdays = saturdays
         
-        # Create the params list with the BID and ASK quotes
+        # Normalise what_to_show to a list (default BID+ASK for bid/ask mid-point pairs)
+        if what_to_show is None:
+            self.what_to_show = ['BID', 'ASK']
+        elif isinstance(what_to_show, str):
+            self.what_to_show = [what_to_show]
+        else:
+            self.what_to_show = list(what_to_show)
+        # Create the params list — one entry per whatToShow value per Saturday
         j = 0
-        # A loop to iterate through each Saturday
         for date0 in self.saturdays:
-            # Append a list with the BID quote
-            self.params_list.append([j, self.contract, date0, 'BID'])
-            # Append a list with the ASK quote
-            self.params_list.append([j+1, self.contract, date0, 'ASK'])
-            # Create an empty dataframe corresponding to the BID params list
-            self.dfs[f'{j}'] = pd.DataFrame()
-            # Create an empty dataframe corresponding to the ASK params list
-            self.dfs[f'{j+1}'] = pd.DataFrame()
-            # Update the params list iterator
-            j+=2
+            for wts in self.what_to_show:
+                self.params_list.append([j, self.contract, date0, wts])
+                self.dfs[f'{j}'] = pd.DataFrame()
+                j += 1
             
         # Set the order-IDs list as per the Saturday’s list
         self.orderIDs = list(range(0,(len(self.params_list))))
@@ -156,14 +163,21 @@ class app_for_download_data(EWrapper, EClient):
             
     def error(self, reqId, code, msg, *args, **kwargs):
         ''' Called if an error occurs '''
-        
-        # Save tje ,essage
         self.errors_code_dict[code] = msg
-        # Print only the following messages
-        if (code != 502 or code != 504 or \
-            code != 2103 or code != 2104  or code != 2105 or \
-            code != 2106 or code != 2107 or code != 2157 or code != 2158):
-            print('Error {}: {}'.format(code, msg))
+
+        # Suppress informational farm-connection messages (IB sends these
+        # with code=0 and the info-code as the text)
+        info_codes = {'2103', '2104', '2105', '2106', '2107', '2157', '2158'}
+        if str(code) in info_codes or str(msg).strip() in info_codes:
+            return
+
+        # Identify the symbol for context
+        ct = getattr(self, 'contract', None) or {}
+        sym = str(getattr(ct, 'symbol', '') or '')
+        cur = str(getattr(ct, 'currency', '') or '')
+        symbol = sym + cur if (sym and cur and len(sym) <= 3) else (sym or '?')
+        print(f'[{symbol}] IB Error {code} (reqId={reqId}): {msg}')
+
         if msg == 'Not connected' or \
             msg == \
             "Connectivity between IB and Trader Workstation has been lost." \
@@ -180,22 +194,23 @@ class app_for_download_data(EWrapper, EClient):
             # If the connection wasn't established or the port wasn't the correct one
             if (504 in self.errors_code_dict) == False and \
                (502 in self.errors_code_dict) == False:
-                if port == 7496:  
-                    print("="*80)
-                    print('Setup successfully launched with IB TWS for downloading historical data...')
-                    print("="*80)
-                elif port == 7497:
-                    print("="*80)
-                    print('Setup successfully launched with IB TWS for downloading historical data...')
-                    print("="*80)
-                elif port == 4001:
-                    print("="*80)
-                    print('Setup successfully launched with IB Gateway for downloading historical data...')
-                    print("="*80)
-                elif port == 4002:
-                    print("="*80)
-                    print('Setup successfully launched with IB Gateway for downloading historical data...')
-                    print("="*80)
+                if not self.silent:
+                    if port == 7496:  
+                        print("="*80)
+                        print('Setup successfully launched with IB TWS for downloading historical data...')
+                        print("="*80)
+                    elif port == 7497:
+                        print("="*80)
+                        print('Setup successfully launched with IB TWS for downloading historical data...')
+                        print("="*80)
+                    elif port == 4001:
+                        print("="*80)
+                        print('Setup successfully launched with IB Gateway for downloading historical data...')
+                        print("="*80)
+                    elif port == 4002:
+                        print("="*80)
+                        print('Setup successfully launched with IB Gateway for downloading historical data...')
+                        print("="*80)
                 # Let's download the historical data
                 self.launch_message_bool = True
                 break
@@ -209,12 +224,70 @@ class app_for_download_data(EWrapper, EClient):
         elif 502 in self.errors_code_dict:
             print(self.errors_code_dict[502])
             
+    def contractDetails(self, reqId, contractDetails):
+        '''Called in response to reqContractDetails — resolves futures front month.'''
+        super().contractDetails(reqId, contractDetails)
+        summary = getattr(contractDetails, 'summary', contractDetails)
+        local_symbol = str(getattr(summary, 'localSymbol', '') or '')
+        expiry = str(getattr(summary, 'lastTradeDateOrContractMonth', '') or '')
+        con_id = getattr(summary, 'conId', None)
+        multiplier = str(getattr(summary, 'multiplier', '') or '')
+        if local_symbol and expiry:
+            if not hasattr(self, '_resolved_contract'):
+                self._resolved_contract = None
+            # Keep the earliest (front-month) contract
+            if self._resolved_contract is None or expiry < str(getattr(self._resolved_contract, 'lastTradeDateOrContractMonth', '99999999')):
+                from ibapi.client import Contract as IBContract
+                resolved = IBContract()
+                resolved.symbol = getattr(self.contract, 'symbol', '')
+                resolved.secType = 'FUT'
+                resolved.exchange = getattr(self.contract, 'exchange', 'CME')
+                resolved.currency = getattr(self.contract, 'currency', 'USD')
+                resolved.localSymbol = local_symbol
+                resolved.lastTradeDateOrContractMonth = expiry
+                if multiplier:
+                    resolved.multiplier = multiplier
+                if con_id is not None:
+                    resolved.conId = int(con_id)
+                self._resolved_contract = resolved
+
+    def contractDetailsEnd(self, reqId):
+        super().contractDetailsEnd(reqId)
+        self._contract_details_event.set()
+
+    def _resolve_contract_if_needed(self):
+        '''If this is a futures contract without expiry, resolve via reqContractDetails.'''
+        if getattr(self.contract, 'secType', '') != 'FUT':
+            return
+        if getattr(self.contract, 'lastTradeDateOrContractMonth', ''):
+            return  # already has expiry
+        self._contract_details_event = Event()
+        self._contract_details_event.clear()
+        self._resolved_contract = None
+        self.reqContractDetails(9999, self.contract)
+        self._contract_details_event.wait(timeout=15)
+        if self._resolved_contract is not None:
+            print(f"[{self.contract.symbol}] Resolved contract: {self._resolved_contract.localSymbol} expiry={self._resolved_contract.lastTradeDateOrContractMonth}")
+            self.contract = self._resolved_contract
+
     def InitiateAlgorithm(self, activate = False):
         ''' Function to initiate the historical data download algorithm '''
         
         # If the app was successfully launched
         if activate == True:
             time.sleep(3)
+            # Resolve futures contract if needed
+            self._resolve_contract_if_needed()
+            # Rebuild params with resolved contract
+            self.params_list = []
+            self.dfs = {}
+            j = 0
+            for date0 in self.saturdays:
+                for wts in self.what_to_show:
+                    self.params_list.append([j, self.contract, date0, wts])
+                    self.dfs[f'{j}'] = pd.DataFrame()
+                    j += 1
+            self.orderIDs = list(range(0, len(self.params_list)))
             print(f'Download starts at {datetime.now()}')
             # Download the data and save the result
             result = self.multithreading_loop()
@@ -247,7 +320,7 @@ class app_for_download_data(EWrapper, EClient):
         # Clear the threading event
         self.events[f'{params[0]}'].clear()
         # Download the data
-        self.reqHistoricalData(params[0], params[1], params[2], self.span, '1 min', \
+        self.reqHistoricalData(params[0], params[1], params[2], self.span, self.bar_size, \
                                params[3], False, 1, False, [])
         # Make the event to wait until the download is completed
         self.events[f'{params[0]}'].wait()
@@ -259,44 +332,44 @@ class app_for_download_data(EWrapper, EClient):
         last_params_num = params_list[-1][0]
         # Set the first param list number
         j = params_list[0][0]
+        stride = len(self.what_to_show)  # 2 for BID+ASK, 1 for TRADES
         # Iterate through each params list
         while j <= last_params_num:
-            # Change the BID dataframe columns' names
-            bid_columns = ['bid_'+column for column in self.dfs[f'{j}'].columns.tolist()]
-            self.dfs[f'{j}'].columns = bid_columns
+            if stride == 2:
+                # ── Smart date parsing: daily bars have "YYYYMMDD", intraday have "YYYYMMDD HH:MM:SS TZ" ──
+                def _parse_bar_index(idx):
+                    sample = str(idx[0]) if len(idx) > 0 else ''
+                    if sample and len(sample) <= 10 and ' ' not in sample:
+                        return pd.to_datetime(idx, format='%Y%m%d')
+                    return pd.to_datetime(idx, format='%Y%m%d %H:%M:%S %Z')
+                # ── Bid/Ask pair mode ──
+                # Change the BID dataframe columns' names
+                bid_columns = ['bid_'+column for column in self.dfs[f'{j}'].columns.tolist()]
+                self.dfs[f'{j}'].columns = bid_columns
+                self.dfs[f'{j}'].index = _parse_bar_index(self.dfs[f'{j}'].index)
+                if len(self.dfs[f'{j}'].index) > 0 and ' ' in str(self.dfs[f'{j}'].index[0]):
+                    self.dfs[f'{j}'].index = self.dfs[f'{j}'].index.tz_localize(None)
                 
-            # try:
-            #     # Set the index to datetime type            
-            #     self.dfs[f'{j}'].index = pd.to_datetime(self.dfs[f'{j}'].index, format='%Y%m%d %H:%M:%S %Z')
-            #     # Get rid of the timezone tag
-            #     self.dfs[f'{j}'].index = self.dfs[f'{j}'].index.tz_localize(None)
-            # except:
-            #     # Set the index to datetime type
-            #     self.dfs[f'{j}'].index = pd.to_datetime(self.dfs[f'{j}'].index, format='%Y%m%d  %H:%M:%S')
-            # Set the index to datetime type            
-            self.dfs[f'{j}'].index = pd.to_datetime(self.dfs[f'{j}'].index, format='%Y%m%d %H:%M:%S %Z')
-            # Get rid of the timezone tag
-            self.dfs[f'{j}'].index = self.dfs[f'{j}'].index.tz_localize(None)
-            
-            # Change the ASK dataframe columns' names
-            ask_columns = ['ask_'+column for column in self.dfs[f'{j+1}'].columns.tolist()]
-            self.dfs[f'{j+1}'].columns = ask_columns
-
-            # try:
-            #     # Set the index to datetime type            
-            #     self.dfs[f'{j+1}'].index = pd.to_datetime(self.dfs[f'{j+1}'].index, format='%Y%m%d %H:%M:%S %Z')
-            #     # Get rid of the timezone tag
-            #     self.dfs[f'{j+1}'].index = self.dfs[f'{j+1}'].index.tz_localize(None)
-            # except:
-            #     # Set the index to datetime type            
-            #     self.dfs[f'{j+1}'].index = pd.to_datetime(self.dfs[f'{j+1}'].index, format='%Y%m%d  %H:%M:%S')
-            # Set the index to datetime type            
-            self.dfs[f'{j+1}'].index = pd.to_datetime(self.dfs[f'{j+1}'].index, format='%Y%m%d %H:%M:%S %Z')
-            # Get rid of the timezone tag
-            self.dfs[f'{j+1}'].index = self.dfs[f'{j+1}'].index.tz_localize(None)
-            
-            # Concatenate the BID and ASK dataframes into a single one
-            temp_df = pd.concat([self.dfs[f'{j}'],self.dfs[f'{j+1}']], axis=1)
+                # Change the ASK dataframe columns' names
+                ask_columns = ['ask_'+column for column in self.dfs[f'{j+1}'].columns.tolist()]
+                self.dfs[f'{j+1}'].columns = ask_columns
+                self.dfs[f'{j+1}'].index = _parse_bar_index(self.dfs[f'{j+1}'].index)
+                if len(self.dfs[f'{j+1}'].index) > 0 and ' ' in str(self.dfs[f'{j+1}'].index[0]):
+                    self.dfs[f'{j+1}'].index = self.dfs[f'{j+1}'].index.tz_localize(None)
+                
+                # Concatenate the BID and ASK dataframes into a single one
+                temp_df = pd.concat([self.dfs[f'{j}'],self.dfs[f'{j+1}']], axis=1)
+            else:
+                # ── Single whatToShow (e.g. TRADES) — OHLC columns, no rename ──
+                def _parse_bar_index_single(idx):
+                    sample = str(idx[0]) if len(idx) > 0 else ''
+                    if sample and len(sample) <= 10 and ' ' not in sample:
+                        return pd.to_datetime(idx, format='%Y%m%d')
+                    return pd.to_datetime(idx, format='%Y%m%d %H:%M:%S %Z')
+                self.dfs[f'{j}'].index = _parse_bar_index_single(self.dfs[f'{j}'].index)
+                if len(self.dfs[f'{j}'].index) > 0 and ' ' in str(self.dfs[f'{j}'].index[0]):
+                    self.dfs[f'{j}'].index = self.dfs[f'{j}'].index.tz_localize(None)
+                temp_df = self.dfs[f'{j}']
             # Update the whole historical dataframe
             self.end_df = pd.concat([self.end_df,temp_df])
             # Sort the dataframe by index
@@ -306,7 +379,7 @@ class app_for_download_data(EWrapper, EClient):
             # Save the historical dataframe into a CSV file
             self.end_df.to_csv(self.file_name, encoding='utf-8', index=True)
             # Update the params list number
-            j+=2
+            j += stride
 
     def multithreading_loop(self):
         ''' Function to update the whole historical dataframe '''
@@ -382,6 +455,25 @@ class app_for_download_data(EWrapper, EClient):
 # -------------------------x-----------------------x--------------------------#
 # -------------------------x-----------------------x--------------------------#
 # -------------------------x-----------------------x--------------------------#
+def _resolve_ohlc_for_resample(raw_df):
+    """If the raw minute data has bid/ask columns, compute mid-prices.
+    Otherwise (TRADES OHLC) build a frame in the exact column order
+    that tf.get_mid_series produces, so tf.resample_df doesn't
+    create duplicate lowercase columns."""
+    cols_lower = {str(c).lower() for c in raw_df.columns}
+    if 'bid_close' in cols_lower:
+        return tf.get_mid_series(raw_df)
+    # OHLC data — map columns case-insensitively, output in get_mid_series order
+    col_map = {str(c).lower(): c for c in raw_df.columns}
+    ordered = {}
+    for target in ('Open', 'Close', 'High', 'Low'):
+        src = col_map.get(target.lower())
+        if src is not None:
+            ordered[target] = pd.to_numeric(raw_df[src], errors='coerce')
+    if len(ordered) == 4:
+        return pd.DataFrame(ordered, index=raw_df.index)
+    return raw_df
+
 def update_historical_resampled_data(historical_minute_data, historical_data_address, train_span, data_frequency, market_open_time):
     
     # Set the hour string to resample the data
@@ -400,7 +492,8 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
             else:
                 print('Resample of historical minute data as per the data frequency is in process...')
                 # Resample the data as per the trading frequency
-                historical_data = tf.resample_df(tf.get_mid_series(historical_minute_data), data_frequency, start=f'{hour_string}h{minute_string}min')
+                ohlc = _resolve_ohlc_for_resample(historical_minute_data)
+                historical_data = tf.resample_df(ohlc, data_frequency, start=f'{hour_string}h{minute_string}min')
 
                 # Subset the resample historical data to "train_span observations
                 historical_data.tail(train_span).to_csv(historical_data_address)
@@ -408,7 +501,8 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
         except:
 
             # Resample the data as per the trading frequency
-            historical_data = tf.resample_df(tf.get_mid_series(historical_minute_data), data_frequency, start=f'{hour_string}h{minute_string}min')
+            ohlc = _resolve_ohlc_for_resample(historical_minute_data)
+            historical_data = tf.resample_df(ohlc, data_frequency, start=f'{hour_string}h{minute_string}min')
 
             # Subset the resample historical data to "train_span observations
             historical_data.tail(train_span).to_csv(historical_data_address)
@@ -430,7 +524,8 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
             else:
                 print('Resample of historical minute data as per the data frequency is in process...')
                 # Resample the data as per the trading frequency
-                historical_data = tf.resample_df(tf.get_mid_series(historical_minute_data), data_frequency, start=f'{hour_string}h{minute_string}min')
+                ohlc = _resolve_ohlc_for_resample(historical_minute_data)
+                historical_data = tf.resample_df(ohlc, data_frequency, start=f'{hour_string}h{minute_string}min')
 
                 # Subset the resample historical data to "train_span observations
                 historical_data.tail(train_span).to_csv(historical_data_address)
@@ -438,14 +533,34 @@ def update_historical_resampled_data(historical_minute_data, historical_data_add
         except:
             print('Resample of historical minute data as per the data frequency is in process...')
             # Resample the data as per the trading frequency
-            historical_data = tf.resample_df(tf.get_mid_series(historical_minute_data), data_frequency, start=f'{hour_string}h{minute_string}min')
+            ohlc = _resolve_ohlc_for_resample(historical_minute_data)
+            historical_data = tf.resample_df(ohlc, data_frequency, start=f'{hour_string}h{minute_string}min')
   
             # Subset the resample historical data to "train_span observations
             historical_data.tail(train_span).to_csv(historical_data_address)
     
     print('Resample of historical minute data as per the data frequency is completed...')
     
-def run_hist_data_download_app(historical_minute_data, historical_data_address, symbol, timezone, data_frequency, update, download_span, train_span, market_open_time, date0=None):
+def _ibkr_bar_size(data_frequency):
+    """Map a strategy frequency string to the IBKR barSizeSetting.
+    Returns the IBKR bar size string (e.g. '5 mins', '1 day')."""
+    freq = str(data_frequency).strip().upper()
+    if freq in ('1D', '1 D', '1DAY', 'DAILY', 'DAY'):
+        return '1 day'
+    try:
+        n, unit = tf.get_data_frequency_values(data_frequency)
+    except Exception:
+        return '1 min'  # safe fallback
+    if unit == 'min':
+        return f'{n} min' if n == 1 else f'{n} mins'
+    if unit == 'h':
+        return f'{n} hour' if n == 1 else f'{n} hours'
+    if unit == 'D':
+        return '1 day'
+    return '1 min'  # safe fallback
+
+
+def run_hist_data_download_app(historical_minute_data, historical_data_address, symbol, timezone, data_frequency, update, download_span, train_span, market_open_time, date0=None, client_id=0, silent=False):
     ''' Function to download the historical data and create the resampled historical data '''
     # If there is no date
     if date0 is None:
@@ -511,6 +626,16 @@ def run_hist_data_download_app(historical_minute_data, historical_data_address, 
     else:
         # Create a contract object using the generic builder
         contract = ibf.build_contract_from_spec(asset_spec)
+        # For futures without a contract month, compute the front month
+        asset_class = str(asset_spec.get('asset_class', '')).lower() if asset_spec else ''
+        if asset_class == 'futures' and not getattr(contract, 'lastTradeDateOrContractMonth', ''):
+            quarterly = [3, 6, 9, 12]
+            cm = next((m for m in quarterly if m >= date0.month), quarterly[0])
+            yr = date0.year if cm >= date0.month else date0.year + 1
+            contract.lastTradeDateOrContractMonth = f"{yr}{cm:02d}"
+            if not getattr(contract, 'multiplier', ''):
+                contract.multiplier = '5'
+            print(f"[{symbol}] Auto-resolved front month: {contract.lastTradeDateOrContractMonth}")
         
     # Set the now datetime with the 23:59:00 time
     now = datetime(yearEnd,monthEnd,dayEnd,23,59,00)
@@ -523,9 +648,34 @@ def run_hist_data_download_app(historical_minute_data, historical_data_address, 
     needed = max(2, span_days // 7 + 2)
     saturdays = saturdays[:needed]
     
-    # Run the download app
-    app_for_download_data('127.0.0.1', 0, historical_minute_data, update, contract, now, download_span, timezone, saturdays)
+    # Run the download app — futures use TRADES (IB doesn't support BID/ASK for futures)
+    asset_class = str(asset_spec.get('asset_class', '')).lower() if asset_spec else ''
+    wts = ['TRADES'] if asset_class == 'futures' else None  # None → default BID+ASK
     
-    # Resample the data to the trading frequency
-    update_historical_resampled_data(historical_minute_data, historical_data_address, train_span, data_frequency, market_open_time)
+    # Determine bar size from asset frequency — download at the strategy's declared
+    # frequency so we stream 5-20× fewer bars than the old 1-min-for-everything approach.
+    is_daily = str(data_frequency).strip().upper() in ('1D', '1 D', '1DAY', 'DAILY', 'DAY')
+    bar_size = _ibkr_bar_size(data_frequency)
+    
+    # For daily bars, use a longer span (2 years) and skip Saturday logic
+    if is_daily:
+        app_span = '2 Y'
+        app_saturdays = saturdays[:1]  # single Saturday, just to initialise params
+    else:
+        app_span = download_span
+        app_saturdays = saturdays
+    
+    app_for_download_data('127.0.0.1', client_id, historical_minute_data, update, contract, now, app_span, timezone, app_saturdays, what_to_show=wts, silent=silent, bar_size=bar_size)
+    
+    # Skip resample if requesting at the target frequency (daily→daily needs no resample)
+    if is_daily:
+        import shutil
+        raw_bars = len(pd.read_csv(historical_minute_data, index_col=0))
+        if raw_bars > 0:
+            shutil.copy(historical_minute_data, historical_data_address)
+            print(f'[{symbol}] Daily bars saved directly — {raw_bars} bars.')
+        else:
+            print(f'[{symbol}] Daily download returned 0 bars — keeping existing historical data (if any).')
+    else:
+        update_historical_resampled_data(historical_minute_data, historical_data_address, train_span, data_frequency, market_open_time)
     

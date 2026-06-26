@@ -355,6 +355,16 @@ def _run_parallel_app_portfolio_cycle(apps, tradable_symbol_specs, metadata_by_s
         for future in futures:
             future.result()
 
+    # Capture each app's fresh historical data for the strategy's portfolio-level
+    # get_signal call (mirrors single-app path's _portfolio_symbol_histories).
+    _portfolio_symbol_histories = {}
+    for app in active_apps:
+        sym = str(getattr(app, 'ticker', '')).upper()
+        hist = getattr(app, 'historical_data', None)
+        if sym and hist is not None and not hist.empty:
+            _portfolio_symbol_histories[sym] = hist.copy()
+    lead_app._portfolio_symbol_histories = _portfolio_symbol_histories
+
     print("Collecting shared account updates once for the full universe...")
     sf.collect_shared_account_snapshot([lead_app])
     _broadcast_shared_account_state(lead_app, active_apps)
@@ -785,22 +795,42 @@ def _print_portfolio_order_summary_rows(rows):
 
 
 def _resolve_engine_cycle_frequency(symbol_specs):
-    """Return the strategy_frequency from main.py (engine cycles at this pace).
-    Order submission is gated per-symbol by _is_asset_trading_bar below."""
-    try:
-        import importlib, strategies as _stra_mod
-        stra_name = str(_extract_main_variable("strategy_file", "")).strip()
-        if stra_name:
-            mod_name = stra_name.replace("/", ".").replace("\\", ".").removesuffix(".py")
-            if mod_name.startswith("strategies."):
-                mod_name = mod_name[len("strategies."):]
-            stra = importlib.import_module(mod_name)
-            freq = stra.get_asset_frequency("MES")
-            if freq:
-                return str(freq)
-    except Exception:
-        pass
-    return "5min"
+    """Return the engine heartbeat: the finest of all asset signal frequencies
+    and the user's portfolio_mark_frequency from main.py."""
+    freqs = []
+    for spec in symbol_specs:
+        try:
+            freqs.append(stra.get_asset_frequency(spec["symbol"]))
+        except Exception:
+            pass
+    mark = _extract_main_variable("portfolio_mark_frequency", "5min")
+    if mark:
+        freqs.append(str(mark).strip())
+    return _finest_frequency(freqs) if freqs else "5min"
+
+
+def _finest_frequency(freq_strings):
+    """Return the frequency with the smallest period among a list of frequency strings
+    (e.g. '5min' < '20min' < '1h' < '1D').  Falls back to '5min' on parse errors."""
+    best_period_min = float('inf')
+    best_freq = "5min"
+    for f in freq_strings:
+        try:
+            n, unit = tf.get_data_frequency_values(str(f).strip())
+        except Exception:
+            continue
+        if unit == 'min':
+            period = n
+        elif unit == 'h':
+            period = n * 60
+        elif unit == 'D':
+            period = n * 24 * 60
+        else:
+            continue
+        if period < best_period_min:
+            best_period_min = period
+            best_freq = str(f).strip()
+    return best_freq
 
 
 def _is_asset_trading_bar(symbol, current_period_dt):
@@ -837,8 +867,24 @@ def _is_asset_trading_bar(symbol, current_period_dt):
 
 
 def _is_portfolio_allocation_bar(current_period_dt):
-    """Portfolio allocation only at the daily trading_day_origin bar.
-    Between origin bars, reuse previous targets (strategy-agnostic gate)."""
+    """Portfolio allocation only at bars aligned with the strategy's
+    rebalance frequency (default '1D'). The gate is strategy-agnostic:
+    it uses get_portfolio_rebalance_frequency() from the strategy module."""
+    try:
+        reb_freq = stra.get_portfolio_rebalance_frequency()
+    except Exception:
+        reb_freq = "1D"
+    try:
+        reb_n, reb_unit = tf.get_data_frequency_values(str(reb_freq).strip())
+    except Exception:
+        reb_n, reb_unit = 1, 'D'
+    if reb_unit == 'min':
+        reb_minutes = reb_n
+    elif reb_unit == 'h':
+        reb_minutes = reb_n * 60
+    else:
+        reb_minutes = reb_n * 24 * 60  # daily or coarser
+
     try:
         origin_str = str(_extract_main_variable("trading_day_origin", "18:00")).strip()
         parts = origin_str.split(":")
@@ -847,7 +893,8 @@ def _is_portfolio_allocation_bar(current_period_dt):
         origin_hour, origin_minute = 18, 0
     period_minutes = current_period_dt.hour * 60 + current_period_dt.minute
     origin_minutes = origin_hour * 60 + origin_minute
-    return period_minutes == origin_minutes
+    delta_minutes = (period_minutes - origin_minutes) % (24 * 60)
+    return delta_minutes % reb_minutes == 0
 
 # NOTE: Duplicate _is_asset_trading_bar removed (used incorrect freq_seconds extraction).
 # The correct implementation above is the active one.
@@ -1021,7 +1068,8 @@ def _bulk_download_historical_data(symbol_specs, data_dir, timezone, variables):
 
     os.makedirs(os.path.join(data_dir, "historical"), exist_ok=True)
 
-    for spec in symbol_specs:
+    def _download_one(idx_spec):
+        idx, spec = idx_spec
         symbol = str(spec["symbol"]).upper()
         freq = stra.get_asset_frequency(symbol)
         train_span = stra.get_asset_train_span(symbol)
@@ -1033,26 +1081,29 @@ def _bulk_download_historical_data(symbol_specs, data_dir, timezone, variables):
                 existing = pd.read_csv(hist_path, index_col=0)
                 if len(existing) >= 200:
                     print(f"[{symbol}] Historical data sufficient ({len(existing)} bars). Skipping.")
-                    continue
+                    return
             except Exception:
                 pass
 
-        print(f"[{symbol}] Bulk-downloading historical data from IB (span=10 D)...")
+        is_daily = str(freq).strip().upper() in ('1D', '1 D', '1DAY', 'DAILY', 'DAY')
+        span = '2 Y' if is_daily else '10 D'
+        print(f"[{symbol}] Bulk-downloading historical data from IB (span={span}, bars={freq})...")
         try:
             sdd.run_hist_data_download_app(
-                raw_path,
-                hist_path,
-                symbol,
-                timezone,
-                freq,
-                "false",
-                "10 D",
-                train_span,
-                market_open_time,
+                raw_path, hist_path, symbol, timezone, freq,
+                "false", span, train_span, market_open_time,
+                client_id=1000 + idx * 10, silent=True,
             )
             print(f"[{symbol}] Bulk download complete.")
         except Exception as exc:
             print(f"[{symbol}] IB bulk download failed: {exc}")
+
+    print("=" * 80)
+    print("Bulk-downloading historical data from IB for all symbols...")
+    print("=" * 80)
+    dl_workers = min(6, len(symbol_specs))
+    with ThreadPoolExecutor(max_workers=dl_workers) as executor:
+        list(executor.map(_download_one, enumerate(symbol_specs)))
 
 
 def _ensure_strategy_optimization_for_schedule(variables, symbol_specs, previous_day_start_datetime, now_dt):
@@ -1151,11 +1202,11 @@ def run_portfolio_setup_loop(host, port, account, client_id, timezone, account_c
     allowed_symbols = [s["symbol"] for s in symbol_specs]
 
     while True:
-        market_open_time, market_close_time = tf.define_trading_week(timezone, trading_start_hour, day_end_minute)
+        market_open_time, market_close_time = tf.define_trading_week(timezone, trading_start_hour, day_end_minute, close_hour=day_end_hour, close_minute=day_end_minute)
         now_dt = dt.datetime.now()
         if not _is_within_portfolio_trading_week(now_dt, market_open_time, market_close_time):
             sleep_seconds = max(1, math.ceil((market_open_time - now_dt).total_seconds()))
-            print(f"Portfolio is outside the trading week. Sleeping until market reopen ({sleep_seconds}s).")
+            print(f"Portfolio is outside the trading week. Sleeping until market reopen at {market_open_time}.")
             time.sleep(sleep_seconds)
             continue
 

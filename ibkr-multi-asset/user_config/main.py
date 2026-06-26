@@ -50,7 +50,8 @@ portfolio_parallel_order_submission = True  # Use one shared IB app while valida
 # Strategy controls
 strategy_file = "strategies/strategy.py"
 strategy_frequency = "5min"  # default fallback; per-asset overrides in strategy.py
-strategy_optimization_lookback = 50000  # ~35 days of 5min bars → enough for 1D/4h MA warmup
+strategy_optimization_lookback = 3000  # ~10 days of 5min bars — keeps startup fast for first-time users
+portfolio_mark_frequency = "5min"  # how often equity is valued and the equity curve is recorded (engine heartbeat floor)
 fixed_max_leverage = 1.0
 long_only_symbols = ["ETH", "BTC"]
 

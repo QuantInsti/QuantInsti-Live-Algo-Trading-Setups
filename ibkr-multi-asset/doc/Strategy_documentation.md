@@ -48,9 +48,9 @@ Data rule:
 - this keeps the optimization at `t-1` relative to the active trading day
 
 Current optimization search grids:
-- `fast_window_grid = [10, 20, 30, 40, 60]`
-- `slow_window_grid = [80, 120, 160, 200, 260]`
-- `atr_window_grid = [10, 14, 20, 30]`
+- `fast_window_grid = [20, 40]`
+- `slow_window_grid = [80, 160]`
+- `atr_window_grid = [14, 20]`
 
 Objective:
 - validation-window Sharpe ratio
@@ -133,6 +133,9 @@ The engine expects the active strategy module to expose these hooks:
 - `strategy_parameter_optimization(...)`
 - `validate_strategy_optimization(...)`
 - `get_signal(app, ...)`
+- `refresh_symbol_signal(app)`
+- `get_portfolio_rebalance_frequency()`
+- `get_risk_estimation_frequency()`
 - `set_stop_loss_price(app)`
 - `set_take_profit_price(app)`
 
